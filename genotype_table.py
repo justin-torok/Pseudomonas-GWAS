@@ -59,10 +59,11 @@ presence_absence_table = presence_absence_table[-filter_table_2]
 #%%
 """Writing to text files"""
 """
-np.savetxt('pan_genome_import SpringDb_local as sdb
+import SpringDb_local as sdb
 reload(sdb)
 import numpy as np
-import pandas as pdtable_060915.csv', presence_absence_table, fmt='%d', delimiter=',')
+import pandas as pd
+np.savetxt('pan_genome_table_060915.csv', presence_absence_table, fmt='%d', delimiter=',')
 np.savetxt('core_orfs_060915.csv', core_cdhits, fmt='%d', delimiter=',')
 np.savetxt('genomes_060915.csv', uni_genomes, fmt='%d', delimiter=',')
 """
