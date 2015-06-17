@@ -84,16 +84,25 @@ class PseudomonasGWAS:
         filter_table_2 = np.array(filter_table_2)
         pan_genome = genome[-filter_table_2]
         return pan_genome
+    
+    def get_orth_list(self):
+        query = 'SELECT DISTINCT(cdhit_id), orth_id FROM view_orth_fam WHERE \
+                orth_id >= 1 AND orth_id <= 1921'
+        table = self.db.getAllResultsFromDbQuery(query)
+        table = np.array(sorted(table, key = lambda x: x[0]))
+        return table[:,0].tolist()
         
-    def get_mutation_dataframe(self, orthlist, genomelist=None):
+    def get_mutation_dataframe(self, orthlist=None, genomelist=None):
         """
         Takes a valid orthid list and genome list and queries the database, 
         returning a dataframe containing a binary representation of the 
         presence/absence of all SNPs for the queried orfs and genomes.
         """
-        #Default is all 30 genomes
+        #Default is all 30 genomes, all orfs
         if genomelist == None:
             genomelist = self.strains
+        if orthlist == None:
+            orthlist = self.get_orth_list()
                     
         #Respository for mutation ids and presence/absence matrix, respectively
         mutationlistindex = []
@@ -102,8 +111,8 @@ class PseudomonasGWAS:
         #Query database, obtain infoarray.
         for orth in orthlist:
             genometuples = tuple(genomelist)
-            dbquery = 'SELECT orth_id, genome_id, seq_inframe_aligned FROM \
-            view_orth_fam WHERE genome_id IN %s AND orth_id = %s'%(str(genometuples), 
+            dbquery = 'SELECT cdhit_id, genome_id, seq_inframe_aligned FROM \
+            view_orth_fam WHERE genome_id IN %s AND cdhit_id = %s'%(str(genometuples), 
                                                                    str(orth))
             infotable = self.db.getAllResultsFromDbQuery(dbquery)
             for i in range(np.shape(infotable)[0]):
