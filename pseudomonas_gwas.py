@@ -20,7 +20,6 @@ class PseudomonasGWAS:
     def orf_presence_absence_dataframe(self):
         """
         Import database of orfs (orthids and the genotypes of the 30 strains.
-        ***Query needs to be modified; database not up to date***
         """
         #Build initial table
         table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf \
@@ -58,7 +57,6 @@ class PseudomonasGWAS:
     def core_genes(self):
         """
         Returns an array containing the ids of the core genes.
-        ***Query needs to be modified; database not up to date***
         """
         genome = self.orf_presence_absence_table()
         genomearr = genome.values
@@ -73,9 +71,8 @@ class PseudomonasGWAS:
         """
         Returns a dataframe containing an binary matrix indicating the presence
         or absence of non-core genes in all 30 genomes.
-        ***Query needs to be modified; database not up to date***
         """
-        genome = self.orf_presence_absence_table()
+        genome = self.orf_presence_absence_dataframe()
         genomearr = genome.values
         filter_table_2 = []
         for i in range(np.size(genome.index)):
@@ -96,7 +93,10 @@ class PseudomonasGWAS:
         """
         Takes a valid orthid list and genome list and queries the database, 
         returning a dataframe containing a binary representation of the 
-        presence/absence of all SNPs for the queried orfs and genomes.
+        presence/absence of all SNPs for the queried orfs and genomes. The
+        predominant residue is given a 0. The default is to compile a table
+        using all genes (1921 pre-aligned, in-frame sequences) and genomes, but
+        these can be specified.
         """
         #Default is all 30 genomes, all orfs
         if genomelist == None:
@@ -158,6 +158,19 @@ class PseudomonasGWAS:
             mutationarray = np.array(mutationbinary)
             mutationdf = pd.DataFrame(mutationarray, index=mutationlistindex, columns=genomelist)    
             return mutationdf
-    def complete_dataframe(self):
-        pass
+    def complete_dataframe(self, write=False):
+        """
+        Concatenates the presence/absence dataframe for non-core genes and the 
+        complete mutation dataframe for the core genes. Optionally creates a
+        .csv file with this information.
+        """
+        pan_genes = self.pan_genome()
+        mutations = self.get_mutation_dataframe()
+        completedf = pd.concat([pan_genes, mutations], keys=['pan_gene', 'mutation'])
+        if write == True:
+            from datetime import date
+            filename = 'complete_genotype_df_'+str(date.today())+'.csv'
+            completedf.to_csv(filename)
+        return completedf
+        
         
