@@ -11,20 +11,31 @@ import numpy as np
 import pandas as pd
 from Bio.Seq import Seq
 from Bio.Alphabet import IUPAC
+import pylab
+from sklearn.decomposition import RandomizedPCA
 #%%
 class PseudomonasGWAS:
-    def __init__(self):
+    def __init__(self, phenotype=False):
+        """
+        Default is to query using all 39 strains for which genotype information is
+        known.  If phenotype is set to something other than False, then analysis
+        is restricted to the 30 strains for which there is phenotype information.
+        """
+        if phenotype == False:
+            self.strains = [1,5,6,7,8,9,10,11,12,13,14,24,25,26,27,28,29,30,31,32,
+                            33,35,36,37,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53]
+        else:                    
+            self.strains = [11,12,13,14,24,25,26,27,28,29,30,31,32,33,35,36,37,
+                                39,40,41,42,43,44,45,46,47,48,49,50,51]
         self.db = sdb.SpringDb()
-        self.strains = [11,12,13,14,24,25,26,27,28,29,30,31,32,33,35,36,37,39,
-                        40,41,42,43,44,45,46,47,48,49,50,51]
     def orf_presence_absence_dataframe(self):
         """
-        Import database of orfs (orthids and the genotypes of the 30 strains.
+        Import database of orfs (orthids and the genotypes) of selected strains.
         """
         #Build initial table
         table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf \
-                                            WHERE genome_id IN (SELECT genome_id FROM \
-                                            phenotype) AND cdhit_id IS NOT NULL')                                            
+                                                WHERE genome_id IN %s AND cdhit_id IS NOT \
+                                                NULL'%(str(tuple(self.strains))))                                                
         orfgenarray = np.array(list(set(table)))
         
         orfs = orfgenarray[:,0]
@@ -56,9 +67,9 @@ class PseudomonasGWAS:
         return presence_absence_df
     def core_genes(self):
         """
-        Returns an array containing the ids of the core genes.
+        Returns an array containing the ids of the core genes for all strains.
         """
-        genome = self.orf_presence_absence_table()
+        genome = self.orf_presence_absence_table(phenotype)
         genomearr = genome.values
         filter_table_2 = []
         for i in range(np.size(genome.index)):
@@ -70,7 +81,7 @@ class PseudomonasGWAS:
     def pan_genome(self):
         """
         Returns a dataframe containing an binary matrix indicating the presence
-        or absence of non-core genes in all 30 genomes.
+        or absence of non-core genes.
         """
         genome = self.orf_presence_absence_dataframe()
         genomearr = genome.values
@@ -83,6 +94,10 @@ class PseudomonasGWAS:
         return pan_genome
     
     def get_orth_list(self):
+        """
+        Obtains the (stable) cdhit_ids from the 1921 orfs for which aligned 
+        sequences are available.
+        """
         query = 'SELECT DISTINCT(cdhit_id), orth_id FROM view_orth_fam WHERE \
                 orth_id >= 1 AND orth_id <= 1921'
         table = self.db.getAllResultsFromDbQuery(query)
@@ -172,5 +187,5 @@ class PseudomonasGWAS:
             filename = 'complete_genotype_df_'+str(date.today())+'.csv'
             completedf.to_csv(filename)
         return completedf
-        
+    
         
