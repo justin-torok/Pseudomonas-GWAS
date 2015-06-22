@@ -21,7 +21,8 @@ class PseudomonasGWAS:
         known.  If phenotype is set to something other than False, then analysis
         is restricted to the 30 strains for which there is phenotype information.
         """
-        if phenotype == False:
+        self.phenotype = phenotype
+        if self.phenotype == False:
             self.strains = [1,5,6,7,8,9,10,11,12,13,14,24,25,26,27,28,29,30,31,32,
                             33,35,36,37,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53]
         else:                    
@@ -69,7 +70,7 @@ class PseudomonasGWAS:
         """
         Returns an array containing the ids of the core genes for all strains.
         """
-        genome = self.orf_presence_absence_table(phenotype)
+        genome = self.orf_presence_absence_dataframe()
         genomearr = genome.values
         filter_table_2 = []
         for i in range(np.size(genome.index)):
