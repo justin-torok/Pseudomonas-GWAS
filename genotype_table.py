@@ -10,8 +10,9 @@ import pandas as pd
 """Import database of orfs (cdhits) and the genotypes of the 30 strains"""
 db = sdb.SpringDb()
 table = db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf \
-                                    WHERE genome_id IN (SELECT genome_id FROM \
-                                    phenotype) AND cdhit_id IS NOT NULL')
+                                    WHERE genome_id IN %s AND cdhit_id IS NOT \
+                                                NULL'%(str(tuple([1,5,6,7,8,9,10,11,12,13,14,24,25,26,27,28,29,30,31,32,
+                            33,35,36,37,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53])))) 
 #%%
 """Create a binary genotype matrix indicating the presence or absence of a
 cdhit in a given genome; the presence of a gene is given a value of '1'."""
@@ -37,7 +38,7 @@ inverts any row where the cdhit is present in more than 50% of the strains"""
 
 filter_table = []
 for i in range(np.size(uni_orfs)):
-    entry = sum(presence_absence_table[i,:])>15
+    entry = sum(presence_absence_table[i,:])>19
     filter_table.append(entry)
 filter_table = np.array(filter_table)
 presence_absence_table[filter_table,:] = presence_absence_table[filter_table,:]+1

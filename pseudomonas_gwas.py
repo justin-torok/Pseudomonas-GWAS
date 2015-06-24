@@ -15,19 +15,22 @@ import pylab
 from sklearn.decomposition import RandomizedPCA
 #%%
 class PseudomonasGWAS:
-    def __init__(self, phenotype=False):
+    def __init__(self, phenotype=False, query=False):
         """
         Default is to query using all 39 strains for which genotype information is
         known.  If phenotype is set to something other than False, then analysis
         is restricted to the 30 strains for which there is phenotype information.
         """
         self.phenotype = phenotype
-        if self.phenotype == False:
+        self.query = query
+        if query == True:
+            self.strains = list(query)
+        elif self.phenotype == True:
+            self.strains = [11,12,13,14,24,25,26,27,28,29,30,31,32,33,35,36,37,
+                            39,40,41,42,43,44,45,46,47,48,49,50,51]
+        else:
             self.strains = [1,5,6,7,8,9,10,11,12,13,14,24,25,26,27,28,29,30,31,32,
                             33,35,36,37,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53]
-        else:                    
-            self.strains = [11,12,13,14,24,25,26,27,28,29,30,31,32,33,35,36,37,
-                                39,40,41,42,43,44,45,46,47,48,49,50,51]
         self.db = sdb.SpringDb()
     def orf_presence_absence_dataframe(self):
         """
@@ -57,7 +60,7 @@ class PseudomonasGWAS:
         #of 0
         filter_table = []
         for i in range(np.size(uni_orfs)):
-            entry = sum(presence_absence_table[i,:])>15
+            entry = sum(presence_absence_table[i,:])>19
             filter_table.append(entry)
         filter_table = np.array(filter_table)
         presence_absence_table[filter_table,:] = presence_absence_table[filter_table,:]+1
