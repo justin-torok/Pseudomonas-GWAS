@@ -11,8 +11,6 @@ import numpy as np
 import pandas as pd
 from Bio.Seq import Seq
 from Bio.Alphabet import IUPAC
-import pylab
-from sklearn.decomposition import RandomizedPCA
 #%%
 class PseudomonasGWAS:
     def __init__(self, phenotype=False, query=False):
@@ -99,23 +97,31 @@ class PseudomonasGWAS:
     
     def get_orth_list(self):
         """
-        Obtains the (stable) cdhit_ids from the 1921 orfs for which aligned 
-        sequences are available.
+        Obtains the (stable) cdhit_ids, orth_ids for which in-frame, aligned
+        sequences are available. Currently this includes batches 1 and 3.
         """
-        query = 'SELECT DISTINCT(cdhit_id), orth_id FROM view_orth_fam WHERE \
-                orth_id >= 1 AND orth_id <= 1921'
+        query = 'SELECT DISTINCT(cdhit_id), orth_id FROM view_orth WHERE \
+                orth_id IN (SELECT DISTINCT(orth_id) FROM orf WHERE orth_batch_id \
+                = 1 or orth_batch_id = 3)'
         table = self.db.getAllResultsFromDbQuery(query)
         table = np.array(sorted(table, key = lambda x: x[0]))
         return table[:,0].tolist()
         
-    def get_mutation_dataframe(self, orthlist=None, genomelist=None):
+    def get_mutation_dataframe(self, orthlist=None, genomelist=None, 
+                               overrule=False):
         """
         Takes a valid orthid list and genome list and queries the database, 
         returning a dataframe containing a binary representation of the 
         presence/absence of all SNPs for the queried orfs and genomes. The
         predominant residue is given a 0. The default is to compile a table
-        using all genes (1921 pre-aligned, in-frame sequences) and genomes, but
-        these can be specified.
+        using all orthologs (from batches 1 and 3) and genomes, but
+        these can be specified. 
+        
+        In the case that there is only partial sequence information available 
+        for a given orth, the exception is handled and a dataframe containing 
+        the orths which have missing sequences is returned instead of the
+        binary dataframe. The binary matrix containing all the successfully
+        parsed sequences is returned instead if overrule is set to True.
         """
         #Default is all 30 genomes, all orfs
         if genomelist == None:
@@ -126,57 +132,74 @@ class PseudomonasGWAS:
         #Respository for mutation ids and presence/absence matrix, respectively
         mutationlistindex = []
         mutationbinary = []
+        missinglist = []
         
-        #Query database, obtain infoarray.
+        #Query database, obtain infoarray. An exception for missing sequences is handled
         for orth in orthlist:
-            genometuples = tuple(genomelist)
-            dbquery = 'SELECT cdhit_id, genome_id, seq_inframe_aligned FROM \
-            view_orth_fam WHERE genome_id IN %s AND cdhit_id = %s'%(str(genometuples), 
-                                                                   str(orth))
-            infotable = self.db.getAllResultsFromDbQuery(dbquery)
-            for i in range(np.shape(infotable)[0]):
-                infotable[i] = list(infotable[i])
-            infoarray = np.array(sorted(infotable, key=lambda x: x[1]))
-     
-        #Create aligned array of amino acid sequences for each orf/genome
-            dnas = [len(list(x)) for x in infoarray[:,2]]
-            if dnas.count(dnas[0]) == len(dnas) and dnas[0]%3 == 0:
-                protlen = dnas[0]/3
-                aminoacidarray = np.zeros((np.shape(infoarray)[0],protlen), dtype=str)
-                for i in range(np.shape(aminoacidarray)[0]):
-                    dnaseq = Seq(infoarray[i][2], IUPAC.unambiguous_dna)
-                    protseq = dnaseq.translate()
-                    aminoacidarray[i,:] = np.array(list(protseq))
-                print 'Orth %s parsed successfully.'%(str(orth))
-            else:
-                print 'Orth %s seqs are of different lengths, cannot align.'%(str(orth))
+            try:
+                genometuples = tuple(genomelist)
+                dbquery = 'SELECT cdhit_id, genome_id, seq_inframe_aligned FROM \
+                view_orth WHERE genome_id IN %s AND cdhit_id = %s'%(str(genometuples), 
+                                                                       str(orth))
+                infotable = self.db.getAllResultsFromDbQuery(dbquery)
+                for i in range(np.shape(infotable)[0]):
+                    infotable[i] = list(infotable[i])
+                infoarray = np.array(sorted(infotable, key=lambda x: x[1]))
+            
+                #Create aligned array of amino acid sequences for each orf/genome
+                
+                dnas = [len(list(x)) for x in infoarray[:,2]]
+                if dnas.count(dnas[0]) == len(dnas) and dnas[0]%3 == 0:
+                    protlen = dnas[0]/3
+                    aminoacidarray = np.zeros((np.shape(infoarray)[0],protlen), dtype=str)
+                    for i in range(np.shape(aminoacidarray)[0]):
+                        dnaseq = Seq(infoarray[i][2], IUPAC.unambiguous_dna)
+                        protseq = dnaseq.translate()
+                        aminoacidarray[i,:] = np.array(list(protseq))
+                    print 'Orth %s parsed successfully.'%(str(orth))
+                else:
+                    print 'Orth %s seqs are of different lengths, cannot align.'%(str(orth))
+                    continue
+                
+                #Create mutation table
+                for i in range(protlen):
+                    resarray = aminoacidarray[:,i]
+                    if np.size(np.unique(resarray)) != 1:
+                        rescountdict = {}
+                        for res in np.unique(resarray):
+                            ct = resarray.tolist().count(res)
+                            rescountdict[ct] = res
+                        aawt = rescountdict[max(rescountdict.keys())]
+                        for res in rescountdict.values():
+                            if res != aawt:
+                                binaryrow = np.zeros(np.size(resarray), dtype=int)
+                                rowindex = (resarray == res)
+                                binaryrow[rowindex] = 1
+                                mutationbinary.append(binaryrow)
+                                mutation = str(orth)+'_'+aawt+str(i)+res
+                                mutationlistindex.append(mutation)
+            except TypeError:
+                print '%d did not parse because of missing seqs.'%(orth)
+                for row in infoarray:
+                    if row[2] is None:
+                        missinglist.append(np.array([row[0],row[1]]))
                 continue
             
-        #Create mutation table
-            for i in range(protlen):
-                resarray = aminoacidarray[:,i]
-                if np.size(np.unique(resarray)) != 1:
-                    rescountdict = {}
-                    for res in np.unique(resarray):
-                        ct = resarray.tolist().count(res)
-                        rescountdict[ct] = res
-                    aawt = rescountdict[max(rescountdict.keys())]
-                    for res in rescountdict.values():
-                        if res != aawt:
-                            binaryrow = np.zeros(np.size(resarray), dtype=int)
-                            rowindex = (resarray == res)
-                            binaryrow[rowindex] = 1
-                            mutationbinary.append(binaryrow)
-                            mutation = str(orth)+'_'+aawt+str(i)+res
-                            mutationlistindex.append(mutation)
-        
         #Generate final dataframe
         if len(mutationlistindex) == 0:
             print 'No mutations detected.'
+        elif len(missinglist) != 0 and overrule == False:
+            print 'Missing sequences detected. Returning dataframe of misses.'
+            missingarray = np.array(missinglist)
+            cols = {'cdhit_id', 'genome_id'}
+            missingdf = pd.DataFrame(missingarray, columns=cols)
+            return missingdf
         else:
+            print 'All orths parsed successfully. Returning binary dataframe.
             mutationarray = np.array(mutationbinary)
             mutationdf = pd.DataFrame(mutationarray, index=mutationlistindex, columns=genomelist)    
             return mutationdf
+            
     def complete_dataframe(self, write=False):
         """
         Concatenates the presence/absence dataframe for non-core genes and the 
@@ -184,7 +207,7 @@ class PseudomonasGWAS:
         .csv file with this information.
         """
         pan_genes = self.pan_genome()
-        mutations = self.get_mutation_dataframe()
+        mutations = self.get_mutation_dataframe(overrule=True)
         completedf = pd.concat([pan_genes, mutations], keys=['pan_gene', 'mutation'])
         if write == True:
             from datetime import date
