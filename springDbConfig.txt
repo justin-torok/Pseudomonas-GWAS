@@ -1,0 +1,1 @@
+host='borreliabase.org' dbname='pa2' user='lab' password='homology'
