@@ -473,6 +473,9 @@ class Regression:
         self.word_count = np.shape(self.unique_arrays_df)[1]      
         self.complete_df = pd.concat((self.phen_df, self.pca_df, self.unique_arrays_df), 
                                      axis=1)
+        arrstranspose = self.unique_arrays_df.transpose()
+        uniquewords = np.dot(arrstranspose.values, 2**np.arange(0,np.shape(self.df)[1]))
+        self.unique_words_df = pd.DataFrame(self.unique_arrays_df.columns, index=uniquewords)
                                      
     def simple_regression(self, intercept=True, bio=True, swarm=True): 
         """
@@ -722,23 +725,27 @@ class Regression:
                                axis=1) 
         elif phenotype == 'swarm':
             fulldf = pd.concat((compdf['genome_id'], compdf['swarming'], hitsdf),
-                               axis=1)         
-        
+                               axis=1)
+
         wordlen = np.shape(self.df)[1]
         wordsarray = np.dot(self.df, 2**np.arange(0,wordlen))
+        wordidsarray = np.array([self.unique_words_df.loc[word] for word in wordsarray])
         wordsdf = pd.DataFrame(wordsarray, index = self.df.index, columns=['words'])          
+        wordidsdf = pd.DataFrame(wordidsarray, index = self.df.index, columns=['wordids'])
         
         justhits = fulldf.iloc[:,2:]
         hitwords = np.dot(justhits.values.T, 2**np.arange(0,wordlen))
-        sumwordsdf = wordsdf[wordsdf.values==hitwords]
-        sumdf = pd.DataFrame(sighits.values, index=sumwordsdf.index, 
+        sumwordidsdf = wordidsdf[wordsdf.values==hitwords]
+        pvalarray = np.array([sighits.loc[wordid] for wordid in np.squeeze(sumwordidsdf.values)])
+        sumdf = pd.DataFrame(pvalarray, index=sumwordidsdf.index, 
                              columns=['p_values'])
         if write == True:
             from datetime import date
             filename = 'hits_summary_'+phenotype+'_'+str(date.today())+'.csv'
             sumdf.to_csv(filename)         
         return sumdf
-
+        
+#%%
 class Plotter:
     """
     This class contains methods to make Manhattan and Q-Q plots, and maybe more 
