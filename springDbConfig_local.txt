@@ -1,1 +1,1 @@
-host='localhost' dbname='pa2' user='postgres' password='woozle'
+host='localhost' dbname='pa2' user=‘torokj’ password=‘St33lyPh!l’

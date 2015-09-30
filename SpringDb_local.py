@@ -20,7 +20,7 @@ class SpringDb:
    	empCount = 0
    	connection = []
    	# change with path to database config file springDbConfig.txt
-   	CONFIGFILE = "/home/justin/Documents/Xavier_Rotation/springDbConfig_local.txt"
+   	#CONFIGFILE = "/Users/torokj/Documents/Pseudomonas-GWAS/springDbConfig_local.txt"
 
    	def __init__(self):
 		"""Contructor"""
@@ -213,10 +213,10 @@ class SpringDb:
 		return self.connection.cursor()
 
 	def connect(self):
-		""" connect to SPRING-DB using information for text file configFile"""
+		""" connect to SPRING-DB using information for text file configFile
 		with open(self.CONFIGFILE, 'r') as f:
-  			configLine = f.readline()	
-		self.connection = psycopg2.connect(configLine)
+  			configLine = f.readline()"""	
+		self.connection = psycopg2.connect("dbname=pa2 user=torokj password=St33lyPh!l host=localhost")
 
 	def __repr__(self):
 		"""output for pretty print"""
