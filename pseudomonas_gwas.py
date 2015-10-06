@@ -11,7 +11,7 @@ facilitates faster analysis than if it is built de novo each time an analysis
 class is instantiated.
 
 Author: Justin Torok, jlt46@cornell.edu
-Last updated: 9/29/2015
+Last updated: 10/5/2015
 
 Note: If SpringDb_local can't find the server, it may not be running; use the following command
 in the terminal: 'pg_ctl -D /usr/local/var/postgres -l /usr/local/var/postgres/server.log start'
@@ -83,9 +83,9 @@ class PseudomonasDataframes:
         """
         self.phenotype = phenotype
         self.query = query
-        if query != None:
+        if query is not None:
             self.strains = list(query)
-        elif self.phenotype == True:
+        elif self.phenotype is True:
             self.strains = [11,12,13,14,24,25,26,27,28,29,30,31,32,33,35,36,37,
                             39,40,41,42,43,44,45,46,47,48,49,50,51]
         else:
@@ -102,27 +102,27 @@ class PseudomonasDataframes:
         """
         Import database of orfs (orthids and the genotypes) of selected strains.
         """
-        #Build initial table
+        # Build initial table
         table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf WHERE genome_id IN %s AND cdhit_id \
                                                 IS NOT NULL'%(str(tuple(self.strains))))
-        orfgenarray = np.array(list(set(table))) #Removes redundant pairs and converts to an array
+        orfgenarray = np.array(list(set(table)))    # Removes redundant pairs and converts to an array
         
         orfs = orfgenarray[:,0]
         uni_orfs = np.unique(orfs)
         series_orfs = pd.Series(np.arange(len(uni_orfs)), index=uni_orfs)
-        ind_orfs = series_orfs[orfs].values #Establishes an arbitrary index for each unique orf
+        ind_orfs = series_orfs[orfs].values     # Establishes an arbitrary index for each unique orf
         
         genomes = orfgenarray[:,1]
         uni_genomes = np.unique(genomes)
         series_genomes = pd.Series(np.arange(len(uni_genomes)), index=uni_genomes)
-        ind_genomes = series_genomes[genomes].values #Establishes an arbitrary index for each unique genome (strain)
+        ind_genomes = series_genomes[genomes].values    # Establishes an arbitrary index for each unique genome (strain)
         
         presence_absence_table = np.zeros((np.shape(uni_orfs)[0], 
                                            np.shape(uni_genomes)[0]), dtype=int)
-        presence_absence_table[ind_orfs,ind_genomes] = 1 #Each unique (orf, genome) pair from the query substitutes a
-                                                         #'1' for a '0' using the preestablished indices.
+        presence_absence_table[ind_orfs,ind_genomes] = 1 # Each unique (orf, genome) pair from the query substitutes a
+                                                         # '1' for a '0' using the preestablished indices.
         
-        #Convert to the convention that the predominant genotype gets a value of 0
+        # Convert to the convention that the predominant genotype gets a value of 0
         filter_table = []
         for i in range(np.size(uni_orfs)):
             entry = sum(presence_absence_table[i,:])>len(self.strains)/2
@@ -192,18 +192,18 @@ class PseudomonasDataframes:
         the binary dataframe if overrule is set to False. Otherwise the binary 
         matrix containing all the successfully parsed sequences is returned (default).
         """
-        #Default is all 30 genomes, all orfs
+        # Default is all 30 genomes, all orfs
         if genomelist == None:
             genomelist = self.strains
         if orthlist == None:
             orthlist = self.get_orth_list()
                     
-        #Respository for mutation ids and presence/absence matrix, respectively
+        # Respository for mutation ids and presence/absence matrix, respectively
         mutationlistindex = []
         mutationbinary = []
         missinglist = []
         
-        #Query database, obtain infoarray. An exception for missing sequences is handled
+        # Query database, obtain infoarray. An exception for missing sequences is handled
         for orth in orthlist:
             try:
                 genometuples = tuple(genomelist)
@@ -402,7 +402,7 @@ class PseudomonasDataframes:
         strainslen = np.shape(phen_df_cont.values)[0]
         phen_df_cont.index = np.arange(1, strainslen+1)
 
-        # THIS HAS TO BE PUT INTO A FUNCTION SOMEHOW TO ACCOMMODATE NEW PHENOTYPES; HOW TO CLUSTER?
+        # THIS HAS TO BE PUT INTO A FUNCTION SOMEHOW TO ACCOMMODATE NEW PHENOTYPES; SEE sklearn.cluster.KMeans
         if continuous is False:
             swarm_cutoff = 25  # Divides swarmers into two classes based on a priori k-means clustering
             swarm_filter = []
@@ -756,7 +756,7 @@ class PCA_Regression:
                 pvaldf = self.simple_regression(intercept=intercept, bio=False)
         
         bonferroni = -np.log10(signif/self.word_count)
-        compdf = self.complete_df
+        compdf = self.complete_df.copy()
         sighits = pvaldf.values[pvaldf.values > bonferroni]
         sighits.index = ['word%d' % x for x in sighits.index]
         hitsdf = compdf[sighits.index]
@@ -914,6 +914,7 @@ class GLS_Regression:
         self.covariance = covmat
         self.phenlist = ['genome_id']+phens
         self.psdfs = PseudomonasDataframes()
+        self.strain_legend = np.array(list(self.psdfs.strain_legend))
         self.misc = MiscFunctions()
         self.binary = binary_phen
         if self.binary is False:
@@ -933,7 +934,7 @@ class GLS_Regression:
         uniquewords = np.dot(arrstranspose.values, 2**np.arange(0, np.shape(self.gen_df)[1]))
         self.unique_words_df = pd.DataFrame(self.unique_arrays_df.columns, index=uniquewords)
 
-    def phenotype_regression(self, phen_ind='swarm_diameter', phen_dep='biofilm', intercept=True, plot=False):
+    def phenotype_regression(self, phen_ind='swarm_diameter', phen_dep='biofilm', intercept=True):
         """
         Performs the GLS regression between two phenotypes using the binary genotype matrix to construct the covariance
         matrix used in the regression, returning a vector of coefficients (beta).  The analytical solution to the
@@ -963,20 +964,15 @@ class GLS_Regression:
         sse = np.sum((Y_c-y_exp)**2)
         rsq = 1-sse/sst
         fstat = ssr/(sse/28)
-        pval = 1-f.cdf(fstat, 1, 28) # Check to make sure that this is the way the p-value was calculated in paper.
+        pval = 1-f.cdf(fstat, 1, 28)
         summary = pd.Series([float(beta[0]), float(beta[1]), rsq, pval], index=['Intercept', 'Slope', 'R^2', 'P_value'])
         print summary
-        if plot is True:    # To be expanded upon later...
-            plot1, = pylab.plot(X_c[:, -1], Y_c, 'bx')
-            x = np.linspace(int(np.min(X_c))-50, int(np.max(X_c))+50, 50)
-            y = beta[0]+x*beta[1]
-            plot2, = pylab.plot(x, y, 'r-')
-            pylab.title('Phenotype Regression')
-            pylab.show()
         return summary
 
     def genotype_regression1(self, phenotypes=['biofilm'], intercept=True):
         """
+        The next few methods are designed to perform the same analysis in different ways.
+
         Goal: Repeat the PCA_Regression analysis, independently testing each gene against a particular phenotype,
         except using the (Cholesky-decomposed) covariance matrix to transform the data instead of incorporating PCs
         as covariates.  Inputs are gen_df and phenotype_df as constructed in the PseudomonasDataframes class above.
@@ -984,25 +980,21 @@ class GLS_Regression:
         be examined independently.  binary_phen specifies whether continuous or binary phenotypes should be tested as
         it applies to the different traits). Intercept is as above in PCA_Regression.
 
-        Ideas/Notes:
-        - Binary or continuous phenotype?  Try both, but binary seems like a good starting point.
-        - Normalization? Necessary for phenotype (if continuous), but for genotype? Probably not.
+        Notes on this method:
+        - Binary phenotype (at first)
         - Testing the transformed phenotypes against the transformed genotypes should be no different from testing them
           straight up: T_inv(y) = alpha + beta*T_inv(x) is no different from y = alpha' + beta*x, barring a trivial
           readjustment of the intercept (not an interesting parameter).  Here, only genotypes should be transformed to
           reflect their phylogeny: y = alpha + beta*T_inv(x).
-        - For y = alpha + beta*T_inv(x), there is only one degree of freedom, so the simple OLS regression, which is
-          similarly integrated in the simple_regression method of PCA_Regression, should be adequate.
-        - An alternative treatment is to use untransformed genotypes and include the covariance matrix as a covariate:
-          y = alpha + beta*x + T*Gamma. *These should yield the same result; test this!* There is still only one degree
-          of freedom, though Gamma will be 30x1 and T*Gamma is really np.multiply(T, Gamma).
+        - Simple OLS regression, no covariates, one degree of freedom (of the mean):
+        - Uses statsmodels and patsy (slow)
         """
         if intercept is False:
             pass
         covmat = self.covariance
         T = np.linalg.cholesky(covmat)
         Tinv = np.linalg.inv(T)
-        compdf = self.complete_df.copy()
+        compdf = self.complete_df.copy()    # Regression modifies original df if a copy isn't used
         for i in range(1, self.word_count+1):
             word = 'word%d'%(i)
             compdf[word] = np.dot(Tinv, compdf[word].reshape((len(self.strains), 1)))
@@ -1028,25 +1020,15 @@ class GLS_Regression:
 
     def genotype_regression2(self, phenotypes=['biofilm'], intercept=True):
         """
-        Goal: Repeat the PCA_Regression analysis, independently testing each gene against a particular phenotype,
-        except using the (Cholesky-decomposed) covariance matrix to transform the data instead of incorporating PCs
-        as covariates.  Inputs are gen_df and phenotype_df as constructed in the PseudomonasDataframes class above.
-        This allows for multiple phenotypes to be tested at once if df is set to True; otherwise a single phenotype can
-        be examined independently.  binary_phen specifies whether continuous or binary phenotypes should be tested as
-        it applies to the different traits). Intercept is as above in PCA_Regression.
-
-        Ideas/Notes:
-        - Binary or continuous phenotype?  Try both, but binary seems like a good starting point.
-        - Normalization? Necessary for phenotype (if continuous), but for genotype? Probably not.
+        Notes on this method:
+        - Binary phenotype (at first)
         - Testing the transformed phenotypes against the transformed genotypes should be no different from testing them
           straight up: T_inv(y) = alpha + beta*T_inv(x) is no different from y = alpha' + beta*x, barring a trivial
           readjustment of the intercept (not an interesting parameter).  Here, only genotypes should be transformed to
           reflect their phylogeny: y = alpha + beta*T_inv(x).
-        - For y = alpha + beta*T_inv(x), there is only one degree of freedom, so the simple OLS regression, which is
-          similarly integrated in the simple_regression method of PCA_Regression, should be adequate.
-        - An alternative treatment is to use untransformed genotypes and include the covariance matrix as a covariate:
-          y = alpha + beta*x + T*Gamma. *These should yield the same result; test this!* There is still only one degree
-          of freedom, though Gamma will be 30x1 and T*Gamma is really np.multiply(T, Gamma).
+        - Simple OLS regression, no covariates, one degree of freedom (of the mean):
+        - Does regression from scratch - exact analytical solution (fast)
+        - As of 10/2/15, the results from the previous method and this one are identical
         """
         if intercept is False:
             pass
@@ -1079,6 +1061,184 @@ class GLS_Regression:
             phenpvaldf[phen] = np.array(logphen)
         print 'Finished'
         return phenpvaldf
+
+    def genotype_regression3(self, phenotypes=['biofilm'], intercept=True):
+        """
+        Notes on this method:
+        - Binary phenotype (at first)
+        - y = alpha + beta*x + T*Gamma. There is still only one degree of freedom, though Gamma will be 30x1 and
+        T*Gamma is really np.multiply(T, Gamma).
+        - Simple OLS regression with 30 covariates, one degree of freedom (of the mean).
+        - Employs a likelihood ratio test (LRT) between a null model (just covariates) and the alternative (cov. + X)
+        - Uses statsmodels and patsy (slow)
+        """
+        if intercept is False:
+            pass
+        covmat = self.covariance
+        T = np.linalg.cholesky(covmat)
+        compdf = self.complete_df.copy()
+        for i in range(1, self.word_count+1):
+            word = 'word%d'%(i)
+            compdf[word] = np.dot(Tinv, compdf[word].reshape((len(self.strains), 1)))
+        phenpvaldf = pd.DataFrame(np.zeros((self.word_count, len(phenotypes))),
+                                  index=np.arange(1, self.word_count+1), columns=phenotypes)
+        pass
+
+    def significant_hits_df(self, phenotype=['biofilm'], intercept=True, signif=0.05):
+        """
+        Performs a GLS regression for the given phenotypes and choice of inclusion of intercept, returning a subset of
+        the complete dataframe (all genotypes) including the phenotypes and the significant genotypes (words).  Can only
+        look at one phenotype at a time.
+        """
+        pvaldf = self.genotype_regression2(phenotypes=phenotype, intercept=intercept)
+        pvalarray = np.concatenate((np.array(pvaldf.index).reshape(np.shape(pvaldf)[0], 1),
+                                    pvaldf[phenotype].values), axis=1)  # This is clumsy but bypasses a bug in pandas
+        phenlist = ['genome_id']+phenotype
+        bonferroni = -np.log10(signif/self.word_count)
+        compdf = self.complete_df.copy()
+        sighitsarray = pvalarray[pvalarray[:, 1] > bonferroni]
+        sighits = pd.DataFrame(sighitsarray[:, 1], index=sighitsarray[:, 0])
+        sighits.index = ['word%d' % x for x in sighits.index]
+        hitsdf = compdf[sighits.index]
+        fulldf = pd.concat((compdf[phenlist], hitsdf), axis=1)
+        return fulldf
+
+    def significant_hits_summary(self, phenotype='biofilm', intercept=True, signif=0.05, write=False):
+        """
+        This function is similar to the previous one and shares much of the same code, but returns a dataframe (can
+        write to file) that contains all the important information about the significant hits.  Can only look at one
+        phenotype at a time.
+
+        Additionally, currently cdhit_id is used to index, but in the future this should
+        be converted to the standard locus names (or they should just be added)
+        """
+        pvaldf = self.genotype_regression2(phenotypes=[phenotype], intercept=intercept)
+        pvalarray = np.concatenate((np.array(pvaldf.index).reshape(np.shape(pvaldf)[0], 1),
+                                    pvaldf[phenotype].values), axis=1)  # This is clumsy but bypasses a bug in pandas
+        bonferroni = -np.log10(signif/self.word_count)
+        compdf = self.complete_df.copy()
+        sighitsarray = pvalarray[pvalarray[:, 1] > bonferroni]
+        sighits = pd.DataFrame(sighitsarray[:, 1], index=sighitsarray[:, 0])
+        sighits.index = ['word%d' % x for x in sighits.index]
+        hitsdf = compdf[sighits.index]
+        wordsarray = np.dot(self.gen_df, 2**np.arange(0, len(self.strains))).reshape(np.shape(self.gen_df)[0], 1)
+        # Recall that self.unique_words_df contains the word id strings indexed by word (decimal) values
+        wordidsarray = np.array([self.unique_words_df.ix[word]
+                                 for word in wordsarray]).reshape(np.shape(self.gen_df)[0], 1)
+        wordsdf = pd.DataFrame(np.concatenate((wordsarray, wordidsarray), axis=1), index=self.gen_df.index,
+                               columns=['words', 'wordids'])
+        hitwords = np.dot(hitsdf.values.T, 2**np.arange(0, len(self.strains)))
+        filterlist = [x in hitwords for x in wordsdf['words']]
+        sumwordidsdf = wordsdf[filterlist]
+        # np.squeeze is necessary below because the listcomp won't work with a column vector, which is 2D
+        pvalarray = np.array([sighits.ix[wordid] for wordid in np.squeeze(sumwordidsdf['wordids'])])
+        sumdf = pd.DataFrame(pvalarray, index=sumwordidsdf.index, columns=['-log(p_values)'])
+        if write is True:
+            from datetime import date
+            filename = 'hits_summary_'+phenotype+'_'+str(date.today())+'.csv'
+            sumdf.to_csv(filename)
+        return sumdf
+
 #%%
 class GLS_Plotter:
-    pass
+    """
+    This class contains methods to make Phenotype Regression, Manhattan, Q-Q plots, and maybe more
+    in the future. It requires specific arguments to pass to the various methods of the Regression class.
+
+    Note: instantiating this class will yield the following output:
+    'Connecting to SPRING-DB...
+    Connected
+    Connecting to SPRING-DB...
+    Connected
+    Finished'
+
+    The reason for the duplicate 'Connecting...Connected' output is that the PseudomonasDataframes class is called
+    twice (once in GLS_Regression, once here).  'Finished' refers to performing the genotype2_regression, which will
+    be preceded by a delay - wait until it appears before executing further commands.
+    """
+    def __init__(self, gen_df, phens=['swarm_diameter', 'biofilm'], binary_phen=True, intercept=True):
+        """
+        Relatively straightforward; GLS_Regression.genotype_regression2 is performed here so that it can be passed
+        to the multiple methods below that require its output.
+        """
+        self.gen_df = gen_df
+        self.binary = binary_phen
+        self.phens = phens
+        self.intercept = intercept
+        self.psdfs = PseudomonasDataframes()
+        self.misc = MiscFunctions()
+        self.gls = GLS_Regression(self.gen_df, phens=self.phens, binary_phen=self.binary)
+        self.phen_df = self.gls.phen_df
+        self.strains = self.phen_df['genome_id']
+        self.pvaldf = self.gls.genotype_regression2(phenotypes=self.phens, intercept=self.intercept)
+
+    def phenotype_regression_plot(self, phen_ind=None, phen_dep=None, intercept=True):
+        """
+        Recreates the phenotype regression plot in the manuscript.  Unfortunately the phenotype regression must be
+        calculated from scratch (code pasted from GLS_Regression.phenotype_regression), but it's a quick calculation.
+        """
+        if phen_ind is None:
+            phen_ind = self.phens[0]
+        if phen_dep is None:
+            phen_dep = self.phens[1]
+        gendf = self.gen_df
+        if self.binary is True:
+            phen_cont = self.psdfs.phenotype_dataframe(continuous=True) # Cont. required for phen/phen regression
+        else:
+            phen_cont = self.phen_df
+        indphen = phen_cont[phen_ind].reshape(len(self.strains), 1)
+        depphen = phen_cont[phen_dep].reshape(len(self.strains), 1)
+        strainlen = len(self.strains)
+        covmat = np.cov(gendf.transpose())
+
+        T = np.linalg.cholesky(covmat)
+        Y_c = np.dot(np.linalg.inv(T), depphen)
+        if intercept is False:
+            X_c = np.dot(np.linalg.inv(T), indphen)
+        else:
+            X_c = np.dot(np.linalg.inv(T), indphen)
+            X_c = np.concatenate((np.ones((strainlen, 1)), X_c), axis=1)
+        beta = np.dot(np.linalg.inv(np.dot(X_c.T, X_c)), np.dot(X_c.T, Y_c))
+        y_exp = np.dot(X_c, beta)
+        sst = np.sum((Y_c-np.mean(Y_c))**2)
+        ssr = np.sum((y_exp-np.mean(Y_c))**2)
+        sse = np.sum((Y_c-y_exp)**2)
+        rsq = 1-sse/sst
+        fstat = ssr/(sse/28)
+        pval = 1-f.cdf(fstat, 1, 28)
+
+        x = X_c[:, -1]
+        y = Y_c
+        plot1, = pylab.plot(x, y, 'bo')
+        labels = [np.array(list(self.psdfs.strain_legend))[i, 1] for i in range(len(self.strains))]
+        for i in range(len(labels)):
+            pylab.annotate(labels[i], xy=(x[i], y[i]), xytext=(10, 10), textcoords='offset points')
+        x2 = np.linspace(int(np.min(X_c))-50, int(np.max(X_c))+50, 50)
+        y2 = beta[0]+x2*beta[1]
+        plot2, = pylab.plot(x2, y2, 'r-')
+        pylab.text(-75, -125, 'y = {0} + {1}(x) \nR-Squared = {2} \nP-value = {3}'.format(float(beta[0]), float(beta[1]), rsq,
+                                                                              pval), horizontalalignment='left')
+        pylab.xlabel('%s (transformed)'%(phen_ind))
+        pylab.ylabel('%s (transformed)'%(phen_dep))
+        pylab.title('Phenotype Regression')
+        pylab.show()
+
+    def qq(self, phenotype=None, write=False):
+        """
+        Creates a quantile-quantile plot.
+        """
+        if phenotype is None:
+            phenotype = self.phens[0]
+        pvaldf = self.pvaldf[phenotype]
+        sortedpvals = np.sort(np.squeeze(pvaldf))
+        sortednull = np.sort(-np.log10(np.linspace(1./self.pvaldf.index[-1], 1, self.pvaldf.index[-1])))
+        plot1 = pylab.plot(sortednull, sortedpvals, 'bo')
+        plot2 = pylab.plot([0, sortednull[-1]], [0, sortednull[-1]], 'r-')
+        pylab.xlabel('Expected p-val')
+        pylab.ylabel('Actual p-val')
+        pylab.title('Q-Q Plot: %s'%(phenotype))
+        if write is True:
+            from datetime import date
+            filename = 'qq_'+phenotype+'_'+str(date.today())+'.png'
+            pylab.savefig(filename)
+        pylab.show()
