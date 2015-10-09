@@ -374,7 +374,7 @@ class PseudomonasDataframes:
             completedf = pd.concat([pan_genes, mutations], keys=['pan_gene', 'mutation'])
         else:
             completedf = mutations
-        if write == True:
+        if write is True:
             from datetime import date
             filename = 'complete_genotype_df_'+str(date.today())+'.csv'
             completedf.to_csv(filename)
@@ -934,6 +934,9 @@ class GLS_Regression:
         uniquewords = np.dot(arrstranspose.values, 2**np.arange(0, np.shape(self.gen_df)[1]))
         self.unique_words_df = pd.DataFrame(self.unique_arrays_df.columns, index=uniquewords)
 
+
+
+
     def phenotype_regression(self, phen_ind='swarm_diameter', phen_dep='biofilm', intercept=True):
         """
         Performs the GLS regression between two phenotypes using the binary genotype matrix to construct the covariance
@@ -1139,6 +1142,7 @@ class GLS_Regression:
             sumdf.to_csv(filename)
         return sumdf
 
+
 #%%
 class GLS_Plotter:
     """
@@ -1240,5 +1244,32 @@ class GLS_Plotter:
         if write is True:
             from datetime import date
             filename = 'qq_'+phenotype+'_'+str(date.today())+'.png'
+            pylab.savefig(filename)
+        pylab.show()
+
+    def manhattan(self, phenotype=None, write=False):
+        orf_legend = np.array(list(self.psdfs.orf_legend))
+
+
+        if phenotype is None:
+            phenotype = self.phens[0]
+        pvaldf = self.pvaldf[phenotype]
+
+
+
+
+
+        graph1 = pylab.plot(self.wordids, self.pvals, 'bo')
+        graph2 = pylab.plot([self.wordids[0],self.wordids[-1]],
+                            [self.bonferroni,self.bonferroni],'r-')
+        pylab.xlabel('word id')
+        pylab.ylabel('-log10(p-val)')
+        if self.phenotype == 'bio':
+            pylab.title('Biofilm Manhattan Plot')
+        elif self.phenotype == 'swarm':
+            pylab.title('Swarming Manhattan Plot')
+        if write == True:
+            from datetime import date
+            filename = 'manhattan_'+self.phenotype+'_'+str(date.today())+'.png'
             pylab.savefig(filename)
         pylab.show()
