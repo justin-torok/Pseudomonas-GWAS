@@ -1,6 +1,16 @@
 """
+To do (as of 10/12/15):
+1. PseudomonasDataframes.phenotype_dataframe: Create an algorithm to 'binarize' arbitrary genotypes.  What is the
+simplest/soundest way to do this?
+2. PseudomonasDataframes.phenotype_dataframe: Import new phenotypes
+
+4. PCA(GLS)_Plotter.manhattan: Exchange word_id for start (multiple assignments in pa2??)
+5. PCA(GLS)_Regression.significant_hits_summary: Include std_locus_name (multiple assignments in pa2??)
+6. GLS_Regression.genotype_regression3: Write this function
+7. Maximum Entropy approach?
+
 This file creates several classes to facilitate linear regression using several
-scientific computing packages within Python. The datasets used are 
+scientific computing packages within Python.
 
 This module is meant to be used in the following way: 1) create a complete_dataframe
 object using the PseudomonasDataframes class (OR build a custom binary genotype df); 
@@ -11,7 +21,7 @@ facilitates faster analysis than if it is built de novo each time an analysis
 class is instantiated.
 
 Author: Justin Torok, jlt46@cornell.edu
-Last updated: 10/5/2015
+Last updated: 10/12/2015
 
 Note: If SpringDb_local can't find the server, it may not be running; use the following command
 in the terminal: 'pg_ctl -D /usr/local/var/postgres -l /usr/local/var/postgres/server.log start'
@@ -282,9 +292,9 @@ class PseudomonasDataframes:
         made here are at the genetic sequence level.
         """
         #Default is all 30 genomes, all orfs
-        if genomelist == None:
+        if genomelist is None:
             genomelist = self.strains
-        if orthlist == None:
+        if orthlist is None:
             orthlist = self.get_orth_list()
 
         #Respository for mutation ids and presence/absence matrix, respectively
@@ -366,11 +376,11 @@ class PseudomonasDataframes:
         used. *Key method for analysis classes*.
         """
         pan_genes = self.pan_genome()
-        if synonymous == True:
+        if synonymous is True:
             mutations = self.get_genetic_mutation_dataframe(overrule=True)
         else:
             mutations = self.get_protein_mutation_dataframe(overrule=True)
-        if pangenes == True:
+        if pangenes is True:
             completedf = pd.concat([pan_genes, mutations], keys=['pan_gene', 'mutation'])
         else:
             completedf = mutations
@@ -380,7 +390,7 @@ class PseudomonasDataframes:
             completedf.to_csv(filename)
         return completedf
 
-    def phenotype_dataframe(self, phenlist=['swarm_diameter', 'biofilm'], continuous=True):
+    def phenotype_dataframe(self, phenlist=['swarm_diameter', 'biofilm'], continuous=False):
         """
         Generates a phenotype dataframe for subsequent analysis. The option to 
         return either the binned (binary) representation of biofilm formation 
@@ -560,94 +570,61 @@ class PCA_Regression:
         The option to leave the phenotypes continuous is given, but the more
         relevant encoding for regression analysis (for biofilm/swarming) is binary.
         """
-        self.df = gen_df
+        self.gen_df = gen_df
         self.ncomps = ncomps
         self.cont = continuous_phen
         psdfs = PseudomonasDataframes()
         self.phen_df = psdfs.phenotype_dataframe(continuous=self.cont)
-        
-        pctools = PCA_Tools(self.df, ncomps=self.ncomps)
+        self.strains = self.phen_df['genome_id']
+
+        pctools = PCA_Tools(self.gen_df, ncomps=self.ncomps)
         self.pca_df = pctools.pca_dataframe()
 
         self.misc = MiscFunctions()
-        self.unique_arrays_df = self.misc.arrays_df(self.df)
+        self.unique_arrays_df = self.misc.arrays_df(self.gen_df)
         self.word_count = np.shape(self.unique_arrays_df)[1]      
         self.complete_df = pd.concat((self.phen_df, self.pca_df, self.unique_arrays_df), axis=1)
 
         # The self.unique_words_df created below is important for reindexing in significant_hits_summary
         arrstranspose = self.unique_arrays_df.transpose()
-        uniquewords = np.dot(arrstranspose.values, 2**np.arange(0,np.shape(self.df)[1]))
+        uniquewords = np.dot(arrstranspose.values, 2**np.arange(0,np.shape(self.gen_df)[1]))
         self.unique_words_df = pd.DataFrame(self.unique_arrays_df.columns, index=uniquewords)
                                      
-    def simple_regression(self, intercept=True, bio=True, swarm=True): 
+    def simple_regression(self, intercept=True, phenotypes=['biofilm', 'swarm_diameter']):
         """
         This function performs a linear regression without incorporating any 
         covariates (and therefore not correcting for population structure). It 
         returns an array of p-values obtained using the StatsModels OLS package. 
         It can take the convenient R-like syntax for its lm() function using the 
-        package patsy, which is used here. Swarming and biofilm formation are 
-        separate phenotypes and are fitted individually. Default is to perform 
-        both regressions, but this is not necessary.
+        package patsy, which is used here.
         
         At the time of this version, no analysis has been done without including 
         a parameter in the models for the intercept. This can be fixed at 0 with
         the intercept parameter set to False, which may be desired in future tests.
-
-        Additionally, this code can probably be written more succinctly. To that point,
-        since new phenotypes may be added in the future, the input should be a list of
-        strings corresponding to the phenotypes of interest.  The code could then define
-        a function and loop through this list so that the p-value generation code would be
-        stated only once. For now (as of 9/25/15) this will be left alone.
         """
         compdf = self.complete_df
+        phenpvaldf = pd.DataFrame(np.zeros((self.word_count, len(phenotypes))), index=np.arange(1, self.word_count+1),
+                                  columns=phenotypes)
         
-        if bio is True:
-            biofilmpvals = []
+        for phen in phenotypes:
+            pvals = []
             for i in range(1, self.word_count+1):
                 if intercept is True:
-                    y1, X1 = dmatrices('biofilm ~ word%d'%(i), data=compdf, return_type='dataframe')
+                    y1, X1 = dmatrices('%(phenotype)s ~ word%(index)d'%{'phenotype': phen, 'index': i}, data=compdf,
+                                       return_type='dataframe')
                 else:
-                    y1, X1 = dmatrices('biofilm ~ word%d - 1'%(i), data=compdf, return_type='dataframe')
+                    y1, X1 = dmatrices('%(phenotype)s ~ word%(index)d - 1'%{'phenotype': phen, 'index': i}, data=compdf,
+                                       return_type='dataframe')
                 mod1 = sm.OLS(y1, X1)
                 res1 = mod1.fit()
                 pval1 = res1.f_pvalue
-                biofilmpvals.append(pval1)
-            logbio = -np.log10(biofilmpvals)
-            biopvaldf = pd.DataFrame(np.array(logbio), index=np.arange(1, self.word_count+1),
-                                     columns=['biofilm_pvals'])
-            itemb = 1
-        else:
-            itemb = 0
+                pvals.append(pval1)
+            logp = -np.log10(pvals)
+            phenpvaldf[phen] = np.array(logp)
+        print 'Finished'
+        return phenpvaldf
         
-        if swarm is True:
-            swarmpvals = []
-            for i in range(1, self.word_count+1):
-                if intercept is True:
-                    y2, X2 = dmatrices('swarm_diameter ~ word%d'%(i), data=compdf, return_type='dataframe')
-                else:
-                    y2, X2 = dmatrices('swarm_diameter ~ word%d - 1'%(i), data=compdf, return_type='dataframe')
-                mod2 = sm.OLS(y1, X1)
-                res2 = mod2.fit()
-                pval2 = res2.f_pvalue
-                swarmpvals.append(pval2)
-            logswarm = -np.log10(swarmpvals)
-            swarmpvaldf = pd.DataFrame(np.array(logswarm), index=np.arange(1, self.word_count+1),
-                                       columns=['swarm_pvals'])
-            items = 1
-        else:
-            items = 0
-        
-        if itemb == 1 and items == 1:
-            pvaldf = pd.concat((biopvaldf, swarmpvaldf), axis=1)
-            return pvaldf
-        elif itemb == 1:
-            return biopvaldf
-        elif items == 1:
-            return swarmpvaldf
-        else:
-            print 'Specify bio, swarm, or both.'
-        
-    def pca_regression(self, princomps=3, intercept=True, bio=True, swarm=True):
+    def pca_regression(self, princomps=3, intercept=True, phenotypes=['biofilm', 'swarm_diameter']):
         """
         This function performs a linear regression using the first X (default 3) 
         principal components as covariates. A likelihood ratio test is employed 
@@ -660,6 +637,8 @@ class PCA_Regression:
         be written more succinctly (See docstring of simple_regression).
         """
         compdf = self.complete_df
+        phenpvaldf = pd.DataFrame(np.zeros((self.word_count, len(phenotypes))), index=np.arange(1, self.word_count+1),
+                                  columns=phenotypes)
         # Creates the input string argument to dmatrices corresponding to the PC columns of compdf
         pclist = range(1, princomps+1)
         pcstring = ''
@@ -669,69 +648,33 @@ class PCA_Regression:
             i += 1
         pcstring = pcstring + 'PC%d'%(pclist[-1])
         
-        if bio is True:
-            biofilmpvals = []
+        for phenotype in phenotypes:
+            pvals = []
             if intercept is True:
-                yn1, Xn1 = dmatrices('biofilm ~ %s'%(pcstring), data=compdf, return_type='dataframe')
+                yn1, Xn1 = dmatrices('%s ~ %s'%(phenotype, pcstring), data=compdf, return_type='dataframe')
             else:
-                yn1, Xn1 = dmatrices('biofilm ~ %s - 1'%(pcstring), data=compdf, return_type='dataframe')
+                yn1, Xn1 = dmatrices('%s ~ %s - 1'%(phenotype, pcstring), data=compdf, return_type='dataframe')
             modn1 = sm.OLS(yn1, Xn1)
             resn1 = modn1.fit()
             llhn1 = resn1.llf
             for i in range(1,self.word_count+1):
                 if intercept is True:
-                    y1, X1 = dmatrices('biofilm ~ %s + word%d'%(pcstring, i), data=compdf, return_type='dataframe')
+                    y1, X1 = dmatrices('%s ~ %s + word%d'%(phenotype, pcstring, i), data=compdf,
+                                       return_type='dataframe')
                 else:
-                    y1, X1 = dmatrices('biofilm ~ %s + word%d - 1'%(pcstring, i), data=compdf, return_type='dataframe')
+                    y1, X1 = dmatrices('%s ~ %s + word%d - 1'%(phenotype, pcstring, i), data=compdf,
+                                       return_type='dataframe')
                 mod1 = sm.OLS(y1, X1)
                 res1 = mod1.fit()
                 llh1 = res1.llf
                 pval1 = 1-chi2.cdf(2*(llh1-llhn1), 1)
-                biofilmpvals.append(pval1)
-            logbio = -np.log10(biofilmpvals)
-            biopvaldf = pd.DataFrame(np.array(logbio), index=np.arange(1,self.word_count+1), columns=['biofilm_pvals'])
-            itemb = 1
-        else:
-            itemb = 0
-        
-        if swarm is True:
-            swarmpvals = []
-            if intercept is True:
-                yn2, Xn2 = dmatrices('swarm_diameter ~ %s'%(pcstring), data=compdf, return_type='dataframe')
-            else:
-                yn2, Xn2 = dmatrices('swarm_diameter ~ %s - 1'%(pcstring), data=compdf, return_type='dataframe')
-            modn2 = sm.OLS(yn2, Xn2)
-            resn2 = modn2.fit()
-            llhn2 = resn2.llf
-            for i in range(1,self.word_count+1):
-                if intercept == True:
-                    y2, X2 = dmatrices('swarm_diameter ~ %s + word%d'%(pcstring, i), data=compdf,
-                                       return_type='dataframe')
-                else:
-                    y2, X2 = dmatrices('swarm_diameter ~ %s + word%d - 1'%(pcstring, i), data=compdf, return_type='dataframe')
-                mod2 = sm.OLS(y2, X2)
-                res2 = mod2.fit()
-                llh2 = res2.llf
-                pval2 = 1-chi2.cdf(2*(llh2-llhn2), 1)
-                swarmpvals.append(pval2)
-            logswarm = -np.log10(swarmpvals)
-            swarmpvaldf = pd.DataFrame(np.array(logswarm), index=np.arange(1,self.word_count+1),
-                                       columns=['swarm_pvals'])
-            items = 1
-        else:
-            items = 0
-            
-        if itemb == 1 and items == 1:
-            pvaldf = pd.concat((biopvaldf, swarmpvaldf), axis=1)
-            return pvaldf
-        elif itemb == 1:
-            return biopvaldf
-        elif items == 1:
-            return swarmpvaldf
-        else:
-            print 'Specify bio, swarm, or both.'
+                pvals.append(pval1)
+            logp = -np.log10(pvals)
+            phenpvaldf[phenotype] = np.array(logp)
+        print 'Finished'
+        return phenpvaldf
 
-    def significant_hit_arrays(self, simple=False, princomps=3, intercept=True, phenotype='bio', signif=0.05):
+    def significant_hit_arrays(self, simple=False, princomps=3, intercept=True, phenotype='biofilm', signif=0.05):
         """
         This function returns a dataframe that contains the relevant genome_ids, 
         phenotypes, and all regression hits given the parameters specified. Default 
@@ -743,33 +686,21 @@ class PCA_Regression:
         The unimplemented idea suggested in the simple_regression docstring would
         more easily accommodate this.
         """
-        if phenotype is 'bio':
-            if simple is False:
-                pvaldf = self.pca_regression(princomps=princomps, intercept=intercept, swarm=False)
-            else:
-                pvaldf = self.simple_regression(intercept=intercept, swarm=False)
-        
-        elif phenotype is 'swarm':
-            if simple is False:
-                pvaldf = self.pca_regression(princomps=princomps, intercept=intercept, bio=False)
-            else:
-                pvaldf = self.simple_regression(intercept=intercept, bio=False)
-        
+        if simple is True:
+            pvaldf = self.simple_regression(intercept=intercept, phenotypes=[phenotype])
+        else:
+            pvaldf = self.pca_regression(princomps=princomps, intercept=intercept, phenotypes=[phenotype])
+        phenlist = ['genome_id']+phenotype
         bonferroni = -np.log10(signif/self.word_count)
         compdf = self.complete_df.copy()
         sighits = pvaldf.values[pvaldf.values > bonferroni]
         sighits.index = ['word%d' % x for x in sighits.index]
         hitsdf = compdf[sighits.index]
-        if phenotype is 'bio':
-            fulldf = pd.concat((compdf['genome_id'], compdf['biofilm'], hitsdf),
-                               axis=1) 
-        elif phenotype is 'swarm':
-            fulldf = pd.concat((compdf['genome_id'], compdf['swarm_diameter'], hitsdf),
-                               axis=1)         
+        fulldf = pd.concat((compdf[phenlist], hitsdf), axis=1)
         return fulldf
     
     def significant_hits_summary(self, simple=False, princomps=3,
-                                 intercept=True, phenotype='bio', signif=0.05, write=False):
+                                 intercept=True, phenotype='biofilm', signif=0.05, write=False):
         """
         This function is similar to the previous one and shares much of the same 
         code, but returns a dataframe (can write to file) that contains all the 
@@ -782,48 +713,38 @@ class PCA_Regression:
         Additionally, currently cdhit_id is used to index, but in the future this should
         be converted to the standard locus names (or they should just be added)
         """
-        if phenotype == 'bio':
-            if simple == False:
-                pvaldf = self.pca_regression(princomps=princomps, intercept=intercept, swarm=False)
-            else:
-                pvaldf = self.simple_regression(intercept=intercept, swarm=False)
-        
-        elif phenotype == 'swarm':
-            if simple == False:
-                pvaldf = self.pca_regression(princomps=princomps, intercept=intercept, bio=False)
-            else:
-                pvaldf = self.simple_regression(intercept=intercept, bio=False)
-        
-        bonferroni = -np.log10(signif/self.word_count)
-        compdf = self.complete_df
-        sighits = pvaldf.values[pvaldf.values > bonferroni]
-        sighits.index = ['word%d'%(x) for x in sighits.index]
-        hitsdf = compdf[sighits.index]
-        if phenotype == 'bio':
-            fulldf = pd.concat((compdf['genome_id'], compdf['biofilm'], hitsdf), axis=1)
-        elif phenotype == 'swarm':
-            fulldf = pd.concat((compdf['genome_id'], compdf['swarm_diameter'], hitsdf), axis=1)
+        if simple is True:
+            pvaldf = self.simple_regression(intercept=intercept, phenotypes=[phenotype])
+        else:
+            pvaldf = self.pca_regression(princomps=princomps, intercept=intercept, phenotypes=[phenotype])
 
-        wordlen = np.shape(self.df)[1]
-        wordsarray = np.dot(self.df, 2**np.arange(0, wordlen))
+        pshape = np.shape(pvaldf)[0]
+        pvalarray = np.concatenate((np.array(pvaldf.index).reshape(pshape, 1),
+                                    pvaldf[phenotype].values.reshape(pshape, 1)), axis=1)  # clumsy but bypasses pd bug
+        bonferroni = -np.log10(signif/self.word_count)
+        compdf = self.complete_df.copy()
+        sighitsarray = pvalarray[pvalarray[:, 1] > bonferroni]
+        sighits = pd.DataFrame(sighitsarray[:, 1], index=sighitsarray[:, 0])
+        sighits.index = ['word%d' % x for x in sighits.index]
+        hitsdf = compdf[sighits.index]
+        wordsarray = np.dot(self.gen_df, 2**np.arange(0, len(self.strains))).reshape(np.shape(self.gen_df)[0], 1)
         # Recall that self.unique_words_df contains the word id strings indexed by word (decimal) values
-        wordidsarray = np.array([self.unique_words_df.ix[word] for word in wordsarray])
-        # Associate both words and word ids with the appropriate cdhit_id.  Probably could be accomplished more
-        # stylistically in a single df using pandas hierarchical indexing, but it's unnecessary here.
-        wordsdf = pd.DataFrame(wordsarray, index=self.df.index, columns=['words'])
-        wordidsdf = pd.DataFrame(wordidsarray, index=self.df.index, columns=['wordids'])
-        
-        justhits = fulldf.ix[:, 2:]
-        hitwords = np.dot(justhits.values.T, 2**np.arange(0, wordlen))
-        sumwordidsdf = wordidsdf[wordsdf.values == hitwords]
+        wordidsarray = np.array([self.unique_words_df.ix[word]
+                                 for word in wordsarray]).reshape(np.shape(self.gen_df)[0], 1)
+        wordsdf = pd.DataFrame(np.concatenate((wordsarray, wordidsarray), axis=1), index=self.gen_df.index,
+                               columns=['words', 'wordids'])
+        hitwords = np.dot(hitsdf.values.T, 2**np.arange(0, len(self.strains)))
+        filterlist = [x in hitwords for x in wordsdf['words']]
+        sumwordidsdf = wordsdf[filterlist]
         # np.squeeze is necessary below because the listcomp won't work with a column vector, which is 2D
-        pvalarray = np.array([sighits.ix[wordid] for wordid in np.squeeze(sumwordidsdf.values)])
-        sumdf = pd.DataFrame(pvalarray, index=sumwordidsdf.index, columns=['p_values'])
+        pvalarray = np.array([sighits.ix[wordid] for wordid in np.squeeze(sumwordidsdf['wordids'])])
+        sumdf = pd.DataFrame(pvalarray, index=sumwordidsdf.index, columns=['-log(p_values)'])
         if write is True:
             from datetime import date
             filename = 'hits_summary_'+phenotype+'_'+str(date.today())+'.csv'
-            sumdf.to_csv(filename)         
+            sumdf.to_csv(filename)
         return sumdf
+
 #%%
 class PCA_Plotter:
     """
@@ -835,60 +756,49 @@ class PCA_Plotter:
     genomic position instead.
     """
     def __init__(self, gen_df, simple=False, princomps=3, intercept=True,
-                 phenotype='bio', signif=0.05):
-        self.df = gen_df
-        reg = PCA_Regression(self.df)
-        if phenotype == 'bio':
-            if simple == False:
-                pvaldf = reg.pca_regression(princomps=princomps, intercept=intercept,
-                                             swarm=False)
-            else:
-                pvaldf = reg.simple_regression(intercept=intercept, swarm=False)
+                 phens=['biofilm', 'swarm_diameter'], signif=0.05):
+        self.gen_df = gen_df
+        reg = PCA_Regression(self.gen_df)
+        if simple is True:
+            self.pvaldf = reg.simple_regression(intercept=intercept, phenotypes=phens)
+        else:
+            self.pvaldf = reg.pca_regression(princomps=princomps, intercept=intercept, phenotypes=phens)
+        self.bonferroni = -np.log10(signif/np.size(self.pvaldf))
+        self.phens = phens
 
-        elif phenotype == 'swarm':
-            if simple == False:
-                pvaldf = reg.pca_regression(princomps=princomps, intercept=intercept,
-                                             bio=False)
-            else:
-                pvaldf = reg.simple_regression(intercept=intercept, bio=False)
-        self.pvals = np.squeeze(pvaldf.values)
-        self.wordids = np.array(pvaldf.index)
-        self.bonferroni = -np.log10(signif/np.size(self.wordids))
-        self.phenotype = phenotype
-
-    def manhattan(self, write=False):
-        graph1 = pylab.plot(self.wordids, self.pvals, 'bo')
-        graph2 = pylab.plot([self.wordids[0],self.wordids[-1]],
-                            [self.bonferroni,self.bonferroni],'r-')
-        pylab.xlabel('word id')
-        pylab.ylabel('-log10(p-val)')
-        if self.phenotype == 'bio':
-            pylab.title('Biofilm Manhattan Plot')
-        elif self.phenotype == 'swarm':
-            pylab.title('Swarming Manhattan Plot')
-        if write == True:
-            from datetime import date
-            filename = 'manhattan_'+self.phenotype+'_'+str(date.today())+'.png'
-            pylab.savefig(filename)
-        pylab.show()
-
-    def qq(self, write=False):
-        sortedpvals = np.sort(self.pvals)
-        sortednull = np.sort(-np.log10(np.linspace(1./self.wordids[-1],1,self.wordids[-1])))
-        graph3 = pylab.plot(sortednull, sortedpvals, 'bo')
-        graph4 = pylab.plot([0,sortednull[-1]],[0,sortednull[-1]],'r-')
+    def qq(self, phenotype=None,  write=False):
+        if phenotype is None:
+            phenotype = self.phens[0]
+        pvaldf = self.pvaldf[phenotype]
+        sortedpvals = np.sort(np.squeeze(pvaldf))
+        sortednull = np.sort(-np.log10(np.linspace(1./self.pvaldf.index[-1], 1, self.pvaldf.index[-1])))
+        plot1 = pylab.plot(sortednull, sortedpvals, 'bo')
+        plot2 = pylab.plot([0, sortednull[-1]], [0, sortednull[-1]], 'r-')
         pylab.xlabel('Expected p-val')
         pylab.ylabel('Actual p-val')
-        if self.phenotype == 'bio':
-            pylab.title('Biofilm Q-Q Plot')
-        elif self.phenotype == 'swarm':
-            pylab.title('swarm_diameter Q-Q Plot')
-        if write == True:
+        pylab.title('Q-Q Plot: %s'%(phenotype))
+        if write is True:
             from datetime import date
-            filename = 'qq_'+self.phenotype+'_'+str(date.today())+'.png'
+            filename = 'qq_'+phenotype+'_'+str(date.today())+'.png'
             pylab.savefig(filename)
         pylab.show()
-#%%
+
+    def manhattan(self, phenotype=None, write=False):
+        if phenotype is None:
+            phenotype = self.phens[0]
+        pvaldf = self.pvaldf[phenotype]
+        graph1 = pylab.plot(pvaldf.index, pvaldf.values, 'bo')
+        graph2 = pylab.plot([pvaldf.index[0], pvaldf.index[-1]],
+                            [self.bonferroni, self.bonferroni], 'r-')
+        pylab.xlabel('word id')
+        pylab.ylabel('-log10(p-val)')
+        pylab.title('Manhattan Plot: %s'%(phenotype))
+        if write is True:
+            from datetime import date
+            filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.png'
+            pylab.savefig(filename)
+        pylab.show()
+
 class GLS_Regression:
     """
     This class contains all the necessary components to perform a GLS regression using the covariance matrix generated
@@ -933,9 +843,6 @@ class GLS_Regression:
         arrstranspose = self.unique_arrays_df.transpose()
         uniquewords = np.dot(arrstranspose.values, 2**np.arange(0, np.shape(self.gen_df)[1]))
         self.unique_words_df = pd.DataFrame(self.unique_arrays_df.columns, index=uniquewords)
-
-
-
 
     def phenotype_regression(self, phen_ind='swarm_diameter', phen_dep='biofilm', intercept=True):
         """
@@ -1116,8 +1023,9 @@ class GLS_Regression:
         be converted to the standard locus names (or they should just be added)
         """
         pvaldf = self.genotype_regression2(phenotypes=[phenotype], intercept=intercept)
-        pvalarray = np.concatenate((np.array(pvaldf.index).reshape(np.shape(pvaldf)[0], 1),
-                                    pvaldf[phenotype].values), axis=1)  # This is clumsy but bypasses a bug in pandas
+        pshape = np.shape(pvaldf)[0]
+        pvalarray = np.concatenate((np.array(pvaldf.index).reshape(pshape, 1),
+                                    pvaldf[phenotype].values.reshape(pshape, 1)), axis=1)  # clumsy but bypasses pd bug
         bonferroni = -np.log10(signif/self.word_count)
         compdf = self.complete_df.copy()
         sighitsarray = pvalarray[pvalarray[:, 1] > bonferroni]
@@ -1160,7 +1068,7 @@ class GLS_Plotter:
     twice (once in GLS_Regression, once here).  'Finished' refers to performing the genotype2_regression, which will
     be preceded by a delay - wait until it appears before executing further commands.
     """
-    def __init__(self, gen_df, phens=['swarm_diameter', 'biofilm'], binary_phen=True, intercept=True):
+    def __init__(self, gen_df, phens=['swarm_diameter', 'biofilm'], binary_phen=True, intercept=True, signif=0.05):
         """
         Relatively straightforward; GLS_Regression.genotype_regression2 is performed here so that it can be passed
         to the multiple methods below that require its output.
@@ -1172,6 +1080,7 @@ class GLS_Plotter:
         self.psdfs = PseudomonasDataframes()
         self.misc = MiscFunctions()
         self.gls = GLS_Regression(self.gen_df, phens=self.phens, binary_phen=self.binary)
+        self.bonferroni = -np.log10(signif/self.gls.word_count)
         self.phen_df = self.gls.phen_df
         self.strains = self.phen_df['genome_id']
         self.pvaldf = self.gls.genotype_regression2(phenotypes=self.phens, intercept=self.intercept)
@@ -1220,7 +1129,7 @@ class GLS_Plotter:
         x2 = np.linspace(int(np.min(X_c))-50, int(np.max(X_c))+50, 50)
         y2 = beta[0]+x2*beta[1]
         plot2, = pylab.plot(x2, y2, 'r-')
-        pylab.text(-75, -125, 'y = {0} + {1}(x) \nR-Squared = {2} \nP-value = {3}'.format(float(beta[0]), float(beta[1]), rsq,
+        pylab.text(np.min(X_c)-50, min(Y_c)-25, 'y = {0} + {1}(x) \nR-Squared = {2} \nP-value = {3}'.format(float(beta[0]), float(beta[1]), rsq,
                                                                               pval), horizontalalignment='left')
         pylab.xlabel('%s (transformed)'%(phen_ind))
         pylab.ylabel('%s (transformed)'%(phen_dep))
@@ -1248,28 +1157,24 @@ class GLS_Plotter:
         pylab.show()
 
     def manhattan(self, phenotype=None, write=False):
+        """
+        Need to queue this by start site - currently unresolved issue.
+
         orf_legend = np.array(list(self.psdfs.orf_legend))
-
-
+        orflegdf = pd.DataFrame(orf_legend, columns=['cdhit_id', 'start', 'std_locus_name'])
+        orflegdf = orflegdf[orflegdf['std_locus_name'].notnull()]
+        """
         if phenotype is None:
             phenotype = self.phens[0]
         pvaldf = self.pvaldf[phenotype]
-
-
-
-
-
-        graph1 = pylab.plot(self.wordids, self.pvals, 'bo')
-        graph2 = pylab.plot([self.wordids[0],self.wordids[-1]],
-                            [self.bonferroni,self.bonferroni],'r-')
+        graph1 = pylab.plot(pvaldf.index, pvaldf.values, 'bo')
+        graph2 = pylab.plot([pvaldf.index[0], pvaldf.index[-1]],
+                            [self.bonferroni, self.bonferroni], 'r-')
         pylab.xlabel('word id')
         pylab.ylabel('-log10(p-val)')
-        if self.phenotype == 'bio':
-            pylab.title('Biofilm Manhattan Plot')
-        elif self.phenotype == 'swarm':
-            pylab.title('Swarming Manhattan Plot')
+        pylab.title('Manhattan Plot: %s'%(phenotype))
         if write == True:
             from datetime import date
-            filename = 'manhattan_'+self.phenotype+'_'+str(date.today())+'.png'
+            filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.png'
             pylab.savefig(filename)
         pylab.show()
