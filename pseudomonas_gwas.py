@@ -1,13 +1,10 @@
 """
-To do (as of 10/12/15):
-1. PseudomonasDataframes.phenotype_dataframe: Create an algorithm to 'binarize' arbitrary genotypes.  What is the
-simplest/soundest way to do this?
-2. PseudomonasDataframes.phenotype_dataframe: Import new phenotypes
+To do (as of 12/3/15):
 
-4. PCA(GLS)_Plotter.manhattan: Exchange word_id for start (multiple assignments in pa2??)
-5. PCA(GLS)_Regression.significant_hits_summary: Include std_locus_name (multiple assignments in pa2??)
-6. GLS_Regression.genotype_regression3: Write this function
-7. Maximum Entropy approach?
+1. PseudomonasDataframes.phenotype_dataframe: Import new phenotypes
+2. PCA/GLS_Plotter.manhattan: Exchange word_id for start (multiple assignments in pa2??)
+3. PCA/GLS_Regression.significant_hits_summary: Include std_locus_name (multiple assignments in pa2??)
+5. Maximum Entropy approach?
 
 This file creates several classes to facilitate linear regression using several
 scientific computing packages within Python.
@@ -21,7 +18,7 @@ facilitates faster analysis than if it is built de novo each time an analysis
 class is instantiated.
 
 Author: Justin Torok, jlt46@cornell.edu
-Last updated: 10/12/2015
+Last updated: 12/3/2015
 
 Note: If SpringDb_local can't find the server, it may not be running; use the following command
 in the terminal: 'pg_ctl -D /usr/local/var/postgres -l /usr/local/var/postgres/server.log start'
@@ -34,7 +31,6 @@ import pandas as pd
 from Bio.Seq import Seq #mutation analysis
 from Bio.Alphabet import IUPAC #mutation analysis
 import pylab #graphical output
-from sklearn.decomposition import RandomizedPCA #PCA
 from patsy import dmatrices #Linear regression
 import statsmodels.api as sm #Linear regression
 from scipy.stats import chi2 #Linear regression
@@ -50,6 +46,13 @@ class MiscFunctions:
         mean, std = vector.mean(), vector.std()
         zscores = (vector-mean)/std
         return zscores
+
+    def normalize(self, vector):
+        mean = vector.mean()
+        cent = vector-mean
+        norm = np.sqrt(np.dot(cent, cent))
+        normed = cent/norm
+        return normed
 
     def arrays_df(self, df):
         """
@@ -93,22 +96,27 @@ class PseudomonasDataframes:
         """
         self.phenotype = phenotype
         self.query = query
+        self.db = sdb.SpringDb()
         if query is not None:
             self.strains = list(query)
         elif self.phenotype is True:
-            self.strains = [11,12,13,14,24,25,26,27,28,29,30,31,32,33,35,36,37,
-                            39,40,41,42,43,44,45,46,47,48,49,50,51]
+            strains = self.db.getAllResultsFromDbQuery('SELECT DISTINCT(genome_id) FROM phenotype')
+            self.strains = sorted(np.squeeze(np.array(strains)))
         else:
-            self.strains = [1,5,6,7,8,9,10,11,12,13,14,24,25,26,27,28,29,30,31,32,
-                            33,35,36,37,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53]
-        self.db = sdb.SpringDb()
+            strains = self.db.getAllResultsFromDbQuery('SELECT DISTINCT(genome_id) FROM orf')
+            self.strains = sorted(np.squeeze(np.array(strains)))
         self.misc = MiscFunctions()
-        self.strain_legend = self.db.getAllResultsFromDbQuery('SELECT genome_id, strain_name FROM \
+        self.strain_legend_raw = self.db.getAllResultsFromDbQuery('SELECT genome_id, strain_name FROM \
                                                               genome WHERE genome_id IN %s'%(str(tuple(self.strains))))
+        strain_array = np.array(self.strain_legend_raw)
+        number_array = strain_array[:, 0].astype(int)
+        strain_df = pd.DataFrame(number_array, columns=['ID'])
+        strain_df['Name'] = strain_array[:, 1]
+        self.strain_legend = strain_df.sort(columns=['ID'])
         self.orf_legend = self.db.getAllResultsFromDbQuery('SELECT DISTINCT(cdhit_id), start, std_locus_name FROM orf \
                                                            WHERE cdhit_id IS NOT NULL')
 
-    def orf_presence_absence_dataframe(self):
+    def raw_presence_absence_dataframe(self):
         """
         Import database of orfs (orthids and the genotypes) of selected strains.
         """
@@ -116,22 +124,51 @@ class PseudomonasDataframes:
         table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf WHERE genome_id IN %s AND cdhit_id \
                                                 IS NOT NULL'%(str(tuple(self.strains))))
         orfgenarray = np.array(list(set(table)))    # Removes redundant pairs and converts to an array
-        
+
         orfs = orfgenarray[:,0]
         uni_orfs = np.unique(orfs)
         series_orfs = pd.Series(np.arange(len(uni_orfs)), index=uni_orfs)
         ind_orfs = series_orfs[orfs].values     # Establishes an arbitrary index for each unique orf
-        
+
         genomes = orfgenarray[:,1]
         uni_genomes = np.unique(genomes)
         series_genomes = pd.Series(np.arange(len(uni_genomes)), index=uni_genomes)
         ind_genomes = series_genomes[genomes].values    # Establishes an arbitrary index for each unique genome (strain)
-        
-        presence_absence_table = np.zeros((np.shape(uni_orfs)[0], 
+
+        presence_absence_table = np.zeros((np.shape(uni_orfs)[0],
                                            np.shape(uni_genomes)[0]), dtype=int)
         presence_absence_table[ind_orfs,ind_genomes] = 1 # Each unique (orf, genome) pair from the query substitutes a
                                                          # '1' for a '0' using the preestablished indices.
-        
+        presence_absence_df = pd.DataFrame(presence_absence_table,
+                                   index=uni_orfs,
+                                   columns=uni_genomes)
+        return presence_absence_df
+
+    # Originally the following method was the default; however, at this point it is important for the presence of a
+    # specific gene be unambiguously given a value of '1'. It is left here for completeness but it is not used by any
+    # other methods
+    def orf_presence_absence_dataframe(self):
+        """
+        Same as the previous method, except the ancestral state is set to '0' for the presence/absence of a gene.
+        """
+        table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf WHERE genome_id IN %s AND cdhit_id \
+                                                IS NOT NULL'%(str(tuple(self.strains))))
+        orfgenarray = np.array(list(set(table)))
+
+        orfs = orfgenarray[:,0]
+        uni_orfs = np.unique(orfs)
+        series_orfs = pd.Series(np.arange(len(uni_orfs)), index=uni_orfs)
+        ind_orfs = series_orfs[orfs].values
+
+        genomes = orfgenarray[:,1]
+        uni_genomes = np.unique(genomes)
+        series_genomes = pd.Series(np.arange(len(uni_genomes)), index=uni_genomes)
+        ind_genomes = series_genomes[genomes].values
+
+        presence_absence_table = np.zeros((np.shape(uni_orfs)[0],
+                                           np.shape(uni_genomes)[0]), dtype=int)
+        presence_absence_table[ind_orfs,ind_genomes] = 1
+
         # Convert to the convention that the predominant genotype gets a value of 0
         filter_table = []
         for i in range(np.size(uni_orfs)):
@@ -145,35 +182,35 @@ class PseudomonasDataframes:
                                            columns=uni_genomes)
         return presence_absence_df
 
-    def core_genes(self):
+    def core_genome(self):
         """
-        Returns an array containing the ids of the core genes for all strains (i.e. orfs corresponding to each row of
-        all zeroes in the presence_absence_dataframe)
+        Returns an array containing the ids of the core genes for all strains (i.e. orfs present in all strains)
         """
-        genome = self.orf_presence_absence_dataframe()
+        genome = self.raw_presence_absence_dataframe()
         genomearr = genome.values
         filter_table_2 = []
         for i in range(np.size(genome.index)):
-            core = sum(genomearr[i,:])==0
+            core = sum(genomearr[i, :]) % len(self.strains) == 0
             filter_table_2.append(core)
         filter_table_2 = np.array(filter_table_2)
-        core_genes = np.array(genome.index[filter_table_2])
-        return core_genes
+        core_genome = genome[filter_table_2]
+        return core_genome
 
-    def pan_genome(self):
+    def accessory_genome(self):
         """
-        Returns a dataframe containing an binary matrix indicating the presence or absence of non-core genes.
+        Returns an array containing the ids of the accessory genes for all strains (i.e. orfs absent in one or more
+        strains)
         """
-        genome = self.orf_presence_absence_dataframe()
+        genome = self.raw_presence_absence_dataframe()
         genomearr = genome.values
         filter_table_2 = []
         for i in range(np.size(genome.index)):
-            core = sum(genomearr[i,:])==0
-            filter_table_2.append(core)
+            accessory = sum(genomearr[i, :]) % len(self.strains) != 0
+            filter_table_2.append(accessory)
         filter_table_2 = np.array(filter_table_2)
-        pan_genome = genome[-filter_table_2]
-        return pan_genome
-    
+        accessory_genome = genome[filter_table_2]
+        return accessory_genome
+
     def get_orth_list(self):
         """
         Obtains the (stable) cdhit_ids, orth_ids for which in-frame, aligned
@@ -182,8 +219,8 @@ class PseudomonasDataframes:
         query = 'SELECT DISTINCT ON(cdhit_id, orth_id) cdhit_id, orth_id FROM orf WHERE \
                 orth_batch_id = 1 or orth_batch_id = 3'
         table = self.db.getAllResultsFromDbQuery(query)
-        table = np.array(sorted(table, key = lambda x: x[0]))
-        return table[:,0].tolist()
+        table = np.array(sorted(table, key=lambda x: x[0]))
+        return table[:, 0].tolist()
 
     def get_protein_mutation_dataframe(self, orthlist=None, genomelist=None, overrule=True):
         """
@@ -203,9 +240,9 @@ class PseudomonasDataframes:
         matrix containing all the successfully parsed sequences is returned (default).
         """
         # Default is all 30 genomes, all orfs
-        if genomelist == None:
+        if genomelist is None:
             genomelist = self.strains
-        if orthlist == None:
+        if orthlist is None:
             orthlist = self.get_orth_list()
                     
         # Respository for mutation ids and presence/absence matrix, respectively
@@ -264,13 +301,13 @@ class PseudomonasDataframes:
                 print '%d did not parse because of missing seqs.'%(orth)
                 for row in infoarray:
                     if row[2] is None:
-                        missinglist.append(np.array([row[0],row[1]]))
+                        missinglist.append(np.array([row[0], row[1]]))
                 continue
             
         #Generate final dataframe
         if len(mutationlistindex) == 0:
             print 'No mutations detected.'
-        elif len(missinglist) != 0 and overrule == False:
+        elif len(missinglist) != 0 and overrule is False:
             print 'Missing sequences detected. Returning dataframe of misses.'
             missingarray = np.array(missinglist)
             cols = {'cdhit_id', 'genome_id'}
@@ -279,12 +316,10 @@ class PseudomonasDataframes:
         else:
             print 'Orths parsed successfully. Returning binary dataframe.'
             mutationarray = np.array(mutationbinary)
-            mutationdf = pd.DataFrame(mutationarray, index=mutationlistindex, 
-                                      columns=genomelist)    
+            mutationdf = pd.DataFrame(mutationarray, index=mutationlistindex, columns=genomelist)
             return mutationdf
 
-    def get_genetic_mutation_dataframe(self, orthlist=None, genomelist=None,
-                                       overrule=True):
+    def get_genetic_mutation_dataframe(self, orthlist=None, genomelist=None, overrule=True):
         """
         Essentially runs identically to get_protein_mutation_dataframe, except synonymous mutations are
         included here.  For identifying protein mutations, the sequences are first translated using
@@ -367,7 +402,7 @@ class PseudomonasDataframes:
                                       columns=genomelist)
             return mutationdf
             
-    def complete_dataframe(self, synonymous=True, pangenes=True, write=False):
+    def complete_dataframe(self, synonymous=False, write=False):
         """
         Concatenates the presence/absence dataframe for non-core genes and the 
         complete mutation dataframe for the core genes. Optionally creates a
@@ -375,22 +410,19 @@ class PseudomonasDataframes:
         get genetic mutations method is used; else the protein mutations method is
         used. *Key method for analysis classes*.
         """
-        pan_genes = self.pan_genome()
+        acc_genes = self.accessory_genome()
         if synonymous is True:
             mutations = self.get_genetic_mutation_dataframe(overrule=True)
         else:
             mutations = self.get_protein_mutation_dataframe(overrule=True)
-        if pangenes is True:
-            completedf = pd.concat([pan_genes, mutations], keys=['pan_gene', 'mutation'])
-        else:
-            completedf = mutations
+        completedf = pd.concat([acc_genes, mutations], keys=['acc_gene', 'mutation'])
         if write is True:
             from datetime import date
             filename = 'complete_genotype_df_'+str(date.today())+'.csv'
             completedf.to_csv(filename)
         return completedf
 
-    def phenotype_dataframe(self, phenlist=['swarm_diameter', 'biofilm'], continuous=False):
+    def phenotype_dataframe(self, phenlist=['swarm_diameter', 'biofilm'], cutoffs=[25, 1.2], continuous=False):
         """
         Generates a phenotype dataframe for subsequent analysis. The option to 
         return either the binned (binary) representation of biofilm formation 
@@ -399,43 +431,42 @@ class PseudomonasDataframes:
         added in the future as the need arises.  As of 9/28/15, there are many
         more phenotypes to examine - waiting for them to be uploaded into the
         database.
+
+        The default values for 'cutoffs' are those used in the paper to cluster
+        the biofilm and swarming phenotypes. Since phenotypes will need to be
+        converted to binary, determining an appropriate cutoff and then creating
+        the dataframe with that value seems like the most economical option to
+        accommodate additional phenotypes.
         """
         cols = ['genome_id'] + phenlist
         phen_dat = self.db.getAllResultsFromDbQuery('SELECT %s FROM phenotype WHERE genome_id \
                                                     IN %s'%(', '.join(cols), str(tuple(self.strains))))
         phen_arr = np.array(phen_dat)
+
         phen_df_cont = pd.DataFrame(phen_arr, columns=cols)
         phen_df_cont[['genome_id']] = phen_df_cont[['genome_id']].astype(int)
-        phen_df_cont = phen_df_cont.sort(columns=['genome_id'])
+        phen_df_cont = phen_df_cont.sort('genome_id')
         for phen in phenlist:
             phen_df_cont[phen] = self.misc.zscore(phen_df_cont[phen])
         strainslen = np.shape(phen_df_cont.values)[0]
         phen_df_cont.index = np.arange(1, strainslen+1)
 
-        # THIS HAS TO BE PUT INTO A FUNCTION SOMEHOW TO ACCOMMODATE NEW PHENOTYPES; SEE sklearn.cluster.KMeans
         if continuous is False:
-            swarm_cutoff = 25  # Divides swarmers into two classes based on a priori k-means clustering
-            swarm_filter = []
-            for i in range(strainslen):
-                entry = phen_arr[i, 1] > swarm_cutoff
-                swarm_filter.append(entry)
-            biofilm_cutoff = 1.2  # Divides biofilm into two classes based on k-means clustering
-            biofilm_filter = []
-            for i in range(strainslen):
-                entry = phen_arr[i,2]>biofilm_cutoff
-                biofilm_filter.append(entry)
-            swarm_filter = np.array(swarm_filter)
-            biofilm_filter = np.array(biofilm_filter)
-            phen_arr[swarm_filter,1], phen_arr[~swarm_filter,1] = 1, 0
-            phen_arr[biofilm_filter,2], phen_arr[~biofilm_filter,2] = 1, 0
+            for j in range(len(phenlist)):
+                cutoff = cutoffs[j]
+                filterer = []
+                for i in range(strainslen):
+                    entry = phen_arr[i, j+1] > cutoff
+                    filterer.append(entry)
+                filtererarr = np.array(filterer)
+                phen_arr[filtererarr, j+1], phen_arr[~filtererarr, j+1] = 1, 0
             phen_arr = phen_arr.astype(int)
-            phen_df_bin = pd.DataFrame(phen_arr, columns=['genome_id', 'swarm_diameter',
-                                                          'biofilm']).sort('genome_id')
+            phen_df_bin = pd.DataFrame(phen_arr, columns=cols).sort('genome_id')
             phen_df_bin.index = np.arange(1, strainslen+1)
             return phen_df_bin
         else:
             return phen_df_cont
-        # Note: The indices of phen_df are arbitrary at this stage, but they become convenient for downstream operations
+        # Note: The index of phen_df is arbitrary at this stage, but it becomes convenient for downstream operations
             
     def swarm_biofilm_plot(self, write=False):
         """
@@ -445,8 +476,7 @@ class PseudomonasDataframes:
         state if more phenotypes and strains are added, but it can serve as a 
         template if nothing else.
         """
-        phen_dat = self.db.getAllResultsFromDbQuery('select genome_id, swarm_diameter, \
-                                                biofilm from phenotype')
+        phen_dat = self.db.getAllResultsFromDbQuery('select genome_id, swarm_diameter, biofilm from phenotype')
         phen_dat = np.array(phen_dat)
         swarm = phen_dat[:,1]
         biofilm = phen_dat[:,2]
@@ -463,12 +493,216 @@ class PseudomonasDataframes:
         pylab.xlabel('Swarm Diameter (mm)')
         pylab.ylabel('Biofilm Index')
         pylab.title('P. aeruginosa Phenotypes')
-        if write == True:
+        if write is True:
             from datetime import date
             filename = 'phenotypes_scatterplot_'+str(date.today())+'.png'
             pylab.savefig(filename)
         pylab.show()
-        
+
+    def core_genome_bar(self, flip=False, save=False):
+        """
+        Note: One strain name is cut off if save is set to True; better to expand the pop-out figure and save it after.
+        """
+        strleg = self.strain_legend
+        coregen = np.array(self.core_genome())
+        totalgen = np.array(self.raw_presence_absence_dataframe())
+        coresum = coregen.sum(axis=0)
+        totalsum = totalgen.sum(axis=0).astype(float)
+        fraction = np.divide(coresum, totalsum)
+        strleg['Fraction'] = fraction
+        strleg = strleg.sort(['Fraction'], ascending=False)
+
+        fig = pylab.figure()
+        ax = fig.add_subplot(111)
+        ind = np.arange(len(self.strains))
+        width = 1.0
+        if flip is False:
+            bars = ax.bar(ind, strleg['Fraction'], width)
+            ax.set_xlim(0, len(self.strains))
+            ax.set_ylim([np.min(fraction)-0.05, np.max(fraction)+0.05])
+            ax.set_ylabel('Fraction')
+            ax.set_title('Core Genome Fraction')
+            ax.set_xticks(ind+width/2)
+            xticks = strleg['Name']
+            xticklabels = ax.set_xticklabels(xticks)
+            pylab.setp(xticklabels, rotation=90, fontsize=10)
+            ax.xaxis.set_ticks_position('none')
+            pylab.show()
+            if save is True:
+                from datetime import date
+                filename = 'core_fraction_bar_'+str(date.today())+'.png'
+                pylab.savefig(filename)
+        else:
+            height = 1.0
+            bars = ax.barh(ind, strleg['Fraction'], height=height)
+            ax.set_ylim(0, len(self.strains)+3)
+            ax.set_xlim(np.min(fraction)-0.05, np.max(fraction)+0.05)
+            ax.set_xlabel('Fraction')
+            ax.set_title('Core Genome Fraction')
+            ax.set_yticks(ind+width/2)
+            yticks = strleg['Name']
+            yticklabels = ax.set_yticklabels(yticks)
+            pylab.setp(yticklabels, fontsize=10)
+            ax.yaxis.set_ticks_position('none')
+            pylab.show()
+            if save is True:
+                from datetime import date
+                filename = 'core_fraction_bar_flip_'+str(date.today())+'.png'
+                pylab.savefig(filename)
+
+    def rarefaction_curves(self, iterations=30, save=False):
+        """
+        Generates the rarefaction curves for the core genome, accessory genome, and pan genome, using a specified number
+        of iterations.  The error bars are one standard deviation from the mean.
+        """
+        totalgen = self.raw_presence_absence_dataframe()
+        strnum = len(self.strains)
+        coregenomesizes = np.zeros((iterations, strnum))
+        pangenomesizes = np.zeros((iterations, strnum))
+        accgenomesizes = np.zeros((iterations, strnum))
+        j = 0
+        while j < iterations:
+            corelist = []
+            panlist = []
+            acclist = []
+            index = np.arange(strnum)
+            np.random.shuffle(index)
+            indexlist = list(index)
+            i0 = indexlist.pop(0)
+            strain0 = totalgen.iloc[:, i0]
+            inter0 = np.array(strain0[strain0 == 1].index)
+            union0 = inter0
+            diff0 = []
+            corelist.append(np.size(inter0))
+            panlist.append(np.size(union0))
+            acclist.append(np.size(diff0))
+            while len(indexlist) > 0:
+                i = indexlist.pop(0)
+                strain = totalgen.iloc[:, i]
+                genes = np.array(strain[strain == 1].index)
+                inter = np.intersect1d(inter0, genes)
+                corelist.append(np.size(inter))
+                union = np.union1d(union0, genes)
+                panlist.append(np.size(union))
+                diff = np.setdiff1d(union, inter)
+                acclist.append(np.size(diff))
+                inter0 = inter
+                union0 = union
+            coregenomesizes[j, :] = corelist
+            pangenomesizes[j, :] = panlist
+            accgenomesizes[j, :] = acclist
+            j += 1
+        coremeans = np.mean(coregenomesizes, axis=0)
+        corestds = np.std(coregenomesizes, axis=0)
+        panmeans = np.mean(pangenomesizes, axis=0)
+        panstds = np.std(pangenomesizes, axis=0)
+        accmeans = np.mean(accgenomesizes, axis=0)
+        accstds = np.std(accgenomesizes, axis=0)
+
+        pylab.subplot(121)
+        cores = pylab.errorbar(np.arange(1, strnum+1), coremeans, yerr=corestds, fmt='ro', label='Core')
+        pans = pylab.errorbar(np.arange(1, strnum+1), panmeans, yerr=panstds, fmt='bo', label='Pan')
+        pylab.legend(handles=[cores, pans])
+        pylab.xlabel('Number of Included Genomes')
+        pylab.ylabel('Number of Genes')
+        pylab.title('Pan/Core Genome Rarefaction Curves')
+
+        pylab.subplot(122)
+        diffs = pylab.errorbar(np.arange(1, strnum+1), accmeans, yerr=accstds, fmt='go', label='Accessory')
+        pylab.xlabel('Number of Included Genomes')
+        pylab.ylabel('Number of Genes')
+        pylab.title('Accessory Genome Rarefaction Curve')
+        pylab.show()
+
+        if save is True:
+            from datetime import date
+            filename = 'rarefaction_curves_'+str(date.today())+'.png'
+            pylab.savefig(filename)
+
+    def snp_vs_presence(self, mut=None, save=False):
+        """
+        This creates a plot of normalized number of SNPs vs normalized number of accessory genes for each genome.
+        """
+        accgen = self.accessory_genome()
+        accsize = np.shape(accgen)[0]
+        accsum = np.sum(np.array(accgen), axis=0)
+        accnorm = accsum/float(accsize)
+        if mut is None:
+            mutgen = self.get_protein_mutation_dataframe()
+        else:
+            mutgen = mut
+        mutsize = np.shape(mutgen)[0]
+        mutsum = np.sum(np.array(mutgen), axis=0)
+        mutnorm = mutsum/float(mutsize)
+        strleg = self.strain_legend
+
+        fig = pylab.figure()
+        ax = fig.add_subplot(111)
+        plot1 = ax.plot(accnorm, mutnorm, 'bo')
+        plot2 = ax.plot([np.min(accnorm)-0.025, np.max(accnorm)+0.025],
+                        [np.min(mutnorm)-0.025, np.max(mutnorm)+0.025], 'r-')
+        labels = strleg['Name']
+        for i in range(len(labels)):
+            pylab.annotate(labels[i], xy=(accnorm[i], mutnorm[i]), xytext=(10, 10), textcoords='offset points')
+        ax.set_xlim(np.min(accnorm)-0.025, np.max(accnorm)+0.025)
+        ax.set_ylim(np.min(mutnorm)-0.025, np.max(mutnorm)+0.025)
+        ax.set_xlabel('Fraction of Accessory Genome')
+        ax.set_ylabel('Fraction of Nonsynonyous SNPs')
+        ax.set_title('Strain Genome Content')
+        pylab.show()
+
+        if save is True:
+            from datetime import date
+            filename = 'snp_presence_'+str(date.today())+'.png'
+            pylab.savefig(filename)
+
+    def pairwise_diff_plot(self, mut=None, save=False):
+        """
+        This plots the differences between each pair of strains in terms of presence/absence of genes and nonsyn. SNPs
+        """
+        if mut is None:
+            mutgen = self.get_protein_mutation_dataframe()
+        else:
+            mutgen = mut
+        mutarr = np.array(mutgen)
+        mutsize = float(np.shape(mutarr)[0])
+        accgen = self.accessory_genome()
+        accarr = np.array(accgen)
+        accsize = float(np.shape(accarr)[0])
+
+        i = 0
+        mutfraclist = []
+        accfraclist = []
+        while i < len(self.strains):
+            for j in range(i+1, len(self.strains)):
+                accdiff = np.abs(accarr[:, i] - accarr[:, j])
+                accsum = np.sum(np.squeeze(accdiff))
+                accfrac = accsum/accsize
+                accfraclist.append(accfrac)
+                mutdiff = np.abs(mutarr[:, i] - mutarr[:, j])
+                mutsum = np.sum(np.squeeze(mutdiff))
+                mutfrac = mutsum/mutsize
+                mutfraclist.append(mutfrac)
+            i += 1
+        relatedacc = 1-np.array(accfraclist)
+        relatedmut = 1-np.array(mutfraclist)
+
+        fig = pylab.figure()
+        ax = fig.add_subplot(111)
+        plot1 = ax.plot(relatedacc, relatedmut, 'go')
+        plot2 = ax.plot([0.5, 1], [0.5, 1], 'r-')
+        ax.set_xlim(0.5, 1)
+        ax.set_ylim(0.5, 1)
+        ax.set_xlabel('Accessory Genome Similarity')
+        ax.set_ylabel('Nonsynonyous SNP Similarity')
+        ax.set_title('Pairwise Relatedness Between Strains')
+        pylab.show()
+
+        if save is True:
+            from datetime import date
+            filename = 'strain_diffs_'+str(date.today())+'.png'
+            pylab.savefig(filename)
+
 #%%
 class PCA_Tools:
     """
@@ -500,8 +734,8 @@ class PCA_Tools:
         """
         pca_arr = self.pcafit.components_.T  #default is to have PCs along the 0 axis
         pcacols = ['PC%d'%(x) for x in np.arange(1, np.shape(pca_arr)[1]+1)]
-        pca_df = pd.DataFrame(pca_arr, index = np.arange(1,np.shape(pca_arr)[0]+1), 
-                              columns = pcacols)
+        pca_df = pd.DataFrame(pca_arr, index=np.arange(1,np.shape(pca_arr)[0]+1),
+                              columns=pcacols)
         return pca_df
     
     def variance_histogram(self, write=False):
@@ -776,7 +1010,7 @@ class PCA_Plotter:
         plot2 = pylab.plot([0, sortednull[-1]], [0, sortednull[-1]], 'r-')
         pylab.xlabel('Expected p-val')
         pylab.ylabel('Actual p-val')
-        pylab.title('Q-Q Plot: %s'%(phenotype))
+        pylab.title('PCA Q-Q Plot: %s'%(phenotype))
         if write is True:
             from datetime import date
             filename = 'qq_'+phenotype+'_'+str(date.today())+'.png'
@@ -792,7 +1026,7 @@ class PCA_Plotter:
                             [self.bonferroni, self.bonferroni], 'r-')
         pylab.xlabel('word id')
         pylab.ylabel('-log10(p-val)')
-        pylab.title('Manhattan Plot: %s'%(phenotype))
+        pylab.title('PCA Manhattan Plot: %s'%(phenotype))
         if write is True:
             from datetime import date
             filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.png'
@@ -971,9 +1205,11 @@ class GLS_Regression:
             phenpvaldf[phen] = np.array(logphen)
         print 'Finished'
         return phenpvaldf
+    """
+    Note: not functional as of 10/27/15, though appears to have no syntactic errors. Not super important - may fix later
 
     def genotype_regression3(self, phenotypes=['biofilm'], intercept=True):
-        """
+        #
         Notes on this method:
         - Binary phenotype (at first)
         - y = alpha + beta*x + T*Gamma. There is still only one degree of freedom, though Gamma will be 30x1 and
@@ -981,18 +1217,50 @@ class GLS_Regression:
         - Simple OLS regression with 30 covariates, one degree of freedom (of the mean).
         - Employs a likelihood ratio test (LRT) between a null model (just covariates) and the alternative (cov. + X)
         - Uses statsmodels and patsy (slow)
-        """
+        #
         if intercept is False:
             pass
         covmat = self.covariance
-        T = np.linalg.cholesky(covmat)
+        T = np.linalg.cholesky(covmat).T
         compdf = self.complete_df.copy()
-        for i in range(1, self.word_count+1):
-            word = 'word%d'%(i)
-            compdf[word] = np.dot(Tinv, compdf[word].reshape((len(self.strains), 1)))
+        Tcols = ['T%d'%i for i in range(1, np.shape(T)[0]+1)]
+        Tdf = pd.DataFrame(T, columns=Tcols)
+        compdf = pd.concat((compdf, Tdf), axis=1)
         phenpvaldf = pd.DataFrame(np.zeros((self.word_count, len(phenotypes))),
                                   index=np.arange(1, self.word_count+1), columns=phenotypes)
-        pass
+        Tstring = ''
+        i = 0
+        while i < len(Tcols)-1:
+            Tstring = Tstring + '%s + '%(Tcols[i])
+            i += 1
+        Tstring = Tstring + Tcols[-1]
+
+        for phen in phenotypes:
+            phenpvals = []
+            if intercept is True:
+                yn1, Xn1 = dmatrices('%s ~ %s'%(phen, Tstring), data=compdf, return_type='dataframe')
+            else:
+                yn1, Xn1 = dmatrices('%s ~ %s - 1'%(phen, Tstring), data=compdf, return_type='dataframe')
+            modn1 = sm.OLS(yn1, Xn1)
+            resn1 = modn1.fit()
+            llhn1 = resn1.llf
+
+            for i in range(1, self.word_count+1):
+                if intercept is True:
+                    arg = '%(phenotype)s ~ %(ts)s + word%(index)d'%{'phenotype':phen, 'ts':Tstring, 'index':i}
+                else:
+                    arg = '%(phenotype)s ~ %(ts)s + word%(index)d - 1'%{'phenotype':phen, 'ts':Tstring, 'index':i}
+                y1, X1 = dmatrices(arg, data=compdf, return_type='dataframe')
+                mod1 = sm.OLS(y1, X1)
+                res1 = mod1.fit()
+                llh1 = res1.llf
+                pval1 = 1-chi2.cdf(2*(llh1-llhn1), 1)
+                phenpvals.append(pval1)
+            logp = -np.log10(phenpvals)
+            phenpvaldf[phen] = np.array(logp)
+        print 'Finished'
+        return phenpvaldf
+    """
 
     def significant_hits_df(self, phenotype=['biofilm'], intercept=True, signif=0.05):
         """
@@ -1149,7 +1417,7 @@ class GLS_Plotter:
         plot2 = pylab.plot([0, sortednull[-1]], [0, sortednull[-1]], 'r-')
         pylab.xlabel('Expected p-val')
         pylab.ylabel('Actual p-val')
-        pylab.title('Q-Q Plot: %s'%(phenotype))
+        pylab.title('Phyl. Q-Q Plot: %s'%(phenotype))
         if write is True:
             from datetime import date
             filename = 'qq_'+phenotype+'_'+str(date.today())+'.png'
@@ -1172,7 +1440,7 @@ class GLS_Plotter:
                             [self.bonferroni, self.bonferroni], 'r-')
         pylab.xlabel('word id')
         pylab.ylabel('-log10(p-val)')
-        pylab.title('Manhattan Plot: %s'%(phenotype))
+        pylab.title('Phyl. Manhattan Plot: %s'%(phenotype))
         if write == True:
             from datetime import date
             filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.png'
