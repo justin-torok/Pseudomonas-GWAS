@@ -18,7 +18,7 @@ facilitates faster analysis than if it is built de novo each time an analysis
 class is instantiated.
 
 Author: Justin Torok, jlt46@cornell.edu
-Last updated: 12/3/2015
+Last updated: 12/17/2015
 
 Note: If SpringDb_local can't find the server, it may not be running; use the following command
 in the terminal: 'pg_ctl -D /usr/local/var/postgres -l /usr/local/var/postgres/server.log start'
@@ -1446,3 +1446,108 @@ class GLS_Plotter:
             filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.png'
             pylab.savefig(filename)
         pylab.show()
+
+class GenomeExporter:
+    """
+    This class contains the necessary methods to write the genome sequences and their gene annotations of strains
+    in the borreliabase.org pa2 database.  The 'genomes' argument should be in the form of a list, even if there is only
+    one genome to be passed to the function.
+    """
+    def __init__(self):
+        import SpringDb_local as sdb
+        reload(sdb)
+        self.db = sdb.SpringDb()
+        self.strain_legend = dict(self.db.getAllResultsFromDbQuery('SELECT genome_id, strain_name FROM genome'))
+        self.assembly_legend = dict(self.db.getAllResultsFromDbQuery('SELECT genome_id, assembly_status FROM genome'))
+
+    def fasta_genome(self, genomes=None):
+        from Bio.Seq import Seq
+        from Bio.Alphabet import IUPAC
+        from Bio.SeqRecord import SeqRecord
+        from Bio import SeqIO
+        gen = genomes
+        if gen is None:
+            query = self.db.getAllResultsFromDbQuery('SELECT genome_id FROM phenotype')
+        elif len(gen) == 1:
+            query_text = 'SELECT DISTINCT(genome_id) FROM orf WHERE genome_id = {}'.format(str(gen[0]))
+            query = self.db.getAllResultsFromDbQuery(query_text)
+        else:
+            strains = sorted(np.squeeze(np.array(gen)))
+            query_text = 'SELECT DISTINCT(genome_id) FROM orf WHERE genome_id IN {}'.format(str(tuple(strains)))
+            query = self.db.getAllResultsFromDbQuery(query_text)
+        query = [x[0] for x in query]
+        gen_dict = dict(enumerate(query))
+        for i in range(len(gen_dict.keys())):
+            seq_query = 'SELECT seq FROM genome_seq WHERE genome_id = {}'.format(gen_dict[i])
+            raw_data = self.db.getAllResultsFromDbQuery(seq_query)
+            seq = Seq(str(raw_data)[3:-3], alphabet=IUPAC.unambiguous_dna)
+            seq_id_list = list((self.strain_legend[gen_dict[i]], self.assembly_legend[gen_dict[i]]))
+            seq_id = ''
+            x = 0
+            while x < len(seq_id_list)-1:
+                seq_id = seq_id + '{}|'.format(seq_id_list[x])
+                x += 1
+            seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
+            seq_rec = SeqRecord(seq, id=seq_id, description='')
+            SeqIO.write(seq_rec, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+            print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. {}'.format(i+1)
+
+    def annotator(self, cdhitid):
+        annotations = self.db.getAllResultsFromDbQuery('select accession, anno_text from prot_fam where '
+                                                  'cdhit_id = {}'.format(cdhitid))
+        annozip = list(zip(annotations))
+        comp = ["".join(c for c in str(entry) if c not in '().",[]') for entry in annozip]
+        comp = [y.replace('||', '/') for y in [x[1:-1].replace("' '", ": ") for x in comp]]
+        comp = [' | '.join(c for c in comp)]
+        return str(comp)[2:-2]
+
+    def fasta_annotation(self, genomes=None):
+        from Bio.Seq import Seq
+        from Bio.Alphabet import IUPAC
+        from Bio.SeqRecord import SeqRecord
+        from Bio import SeqIO
+        gen = genomes
+        if gen is None:
+            query = self.db.getAllResultsFromDbQuery('SELECT genome_id FROM phenotype')
+        elif len(gen) == 1:
+            query_text = 'SELECT DISTINCT(genome_id) FROM orf WHERE genome_id = {}'.format(str(gen[0]))
+            query = self.db.getAllResultsFromDbQuery(query_text)
+        else:
+            strains = sorted(np.squeeze(np.array(gen)))
+            query_text = 'SELECT DISTINCT(genome_id) FROM orf WHERE genome_id IN {}'.format(str(tuple(strains)))
+            query = self.db.getAllResultsFromDbQuery(query_text)
+        query = [x[0] for x in query]
+        gen_dict = dict(enumerate(query))
+        for i in range(len(gen_dict.keys())):
+            seq_query = 'SELECT DISTINCT(cdhit_id), seq, start, stop, strand FROM orf WHERE cdhit_id IS NOT NULL AND ' \
+                        'genome_id = {}'.format(gen_dict[i])
+            raw_data = self.db.getAllResultsFromDbQuery(seq_query)
+            rec_list = []
+            for j in range(len(raw_data)):
+                seq = Seq(raw_data[j][1], alphabet=IUPAC.unambiguous_dna)
+                cdhit = str(raw_data[j][0])
+                seq_id_list = list((self.strain_legend[gen_dict[i]], cdhit))
+                seq_id_list.append(self.assembly_legend[gen_dict[i]])
+                start = raw_data[j][2]
+                stop = raw_data[j][3]
+                seq_id_list.append(start)
+                seq_id_list.append(stop)
+                if raw_data[j][4] is True:
+                    orient = '+1'
+                elif raw_data[j][4] is False:
+                    orient = '-1'
+                else:
+                    orient = '0'
+                seq_id_list.append(orient)
+                seq_id = ''
+                x = 0
+                while x < len(seq_id_list)-1:
+                    seq_id = seq_id + '{}|'.format(seq_id_list[x])
+                    x += 1
+                seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
+                annotations = self.annotator(cdhit)
+                seq_rec = SeqRecord(seq, id=seq_id, description=annotations)
+                rec_list.append(seq_rec)
+            SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+            print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #%d'%(i+1)
+
