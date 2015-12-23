@@ -33,6 +33,7 @@ from Bio.Alphabet import IUPAC #mutation analysis
 import pylab #graphical output
 from patsy import dmatrices #Linear regression
 import statsmodels.api as sm #Linear regression
+from sklearn.decomposition import RandomizedPCA     # Linear regression
 from scipy.stats import chi2 #Linear regression
 from scipy.stats import f
 #%%
@@ -1450,15 +1451,59 @@ class GLS_Plotter:
 class GenomeExporter:
     """
     This class contains the necessary methods to write the genome sequences and their gene annotations of strains
-    in the borreliabase.org pa2 database.  The 'genomes' argument should be in the form of a list, even if there is only
-    one genome to be passed to the function.
+    in the borreliabase.org pa2 database to a fasta file.  The 'genomes' argument should be in the form of a list, even
+    if there is only one genome to be passed to the function.  fasta_genome() exports the raw sequence (separated into
+    contigs if necessary) with a header of: >gi|strain_name|genome_id.contig_id|contig_start|contig_end.
     """
     def __init__(self):
+        """
+        The several dictionaries created here are necessary for various aspects of creating the fasta headers. Any gene
+        annotations originate from loci in either PA01 or PA14, as reflected by the boolean indexing of the raw df
+        gene_code_df.  The genecode.csv file derives from the 'paerug' database in borreliabase.org, which was created
+        directly from postgres.  Writing the csv file was less arduous than trying to use psycopg2 to query both pa2
+        and paerug.
+
+        Worth noting: The formation of cdhit_locus_dict from locus_cdhit_dict as opposed to reversing the order of the
+        locus/cdhit query is necessary because multiple a single cdhit id can map to multiple locus names and keys must
+        be unique. The problematic scenario is that the reversed query could map a cdhit id to a locus name of a
+        strain other than PA01 or PA14, which would then not map to a gene in locus_gene_dict (which only contains loci
+        from PA01 and PA14). As written there should be minimal loss of information.
+        """
         import SpringDb_local as sdb
         reload(sdb)
         self.db = sdb.SpringDb()
         self.strain_legend = dict(self.db.getAllResultsFromDbQuery('SELECT genome_id, strain_name FROM genome'))
         self.assembly_legend = dict(self.db.getAllResultsFromDbQuery('SELECT genome_id, assembly_status FROM genome'))
+        self.gene_code_df = pd.read_csv('/Users/torokj/Documents/Pseudomonas-GWAS/genecode.csv', header=None)
+        gene_code_arr = np.array(self.gene_code_df)
+        loci_number = np.shape(gene_code_arr)[0]
+        boolean_index = []
+        for i in range(loci_number):
+            val = len(list(gene_code_arr[i, 0])) == 6 or 'PA14' in gene_code_arr[i, 0]
+            boolean_index.append(val)
+        gene_code_arr2 = gene_code_arr[np.array(boolean_index)]
+        self.locus_gene_dict = dict(gene_code_arr2)
+        self.locus_cdhit_dict = dict(self.db.getAllResultsFromDbQuery('SELECT std_locus_name, cdhit_id FROM orf '
+                                                                      'WHERE std_locus_name IS NOT NULL'))
+        self.cdhit_gene_dict = dict()
+        self.cdhit_locus_dict = dict()
+        for key in self.locus_gene_dict.keys():
+            if key in self.locus_cdhit_dict.keys():
+                self.cdhit_gene_dict[self.locus_cdhit_dict[key]] = self.locus_gene_dict[key]
+                self.cdhit_locus_dict[self.locus_cdhit_dict[key]] = key
+
+    @staticmethod
+    def spacer_finder(seq):
+        seqlist = list(seq)
+        spacer = 'NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN'
+        spacerlist = list(spacer)
+        seqlen = len(seqlist)
+        spacerlen = len(spacerlist)
+        spalocs = []
+        for i in range(1, 1+seqlen-spacerlen):
+            if seqlist[i:i+spacerlen] == spacerlist:
+                spalocs.append(i)
+        return spalocs
 
     def fasta_genome(self, genomes=None):
         from Bio.Seq import Seq
@@ -1481,25 +1526,28 @@ class GenomeExporter:
             seq_query = 'SELECT seq FROM genome_seq WHERE genome_id = {}'.format(gen_dict[i])
             raw_data = self.db.getAllResultsFromDbQuery(seq_query)
             seq = Seq(str(raw_data)[3:-3], alphabet=IUPAC.unambiguous_dna)
-            seq_id_list = list((self.strain_legend[gen_dict[i]], self.assembly_legend[gen_dict[i]]))
-            seq_id = ''
-            x = 0
-            while x < len(seq_id_list)-1:
-                seq_id = seq_id + '{}|'.format(seq_id_list[x])
-                x += 1
-            seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
-            seq_rec = SeqRecord(seq, id=seq_id, description='')
-            SeqIO.write(seq_rec, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
-            print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. {}'.format(i+1)
-
-    def annotator(self, cdhitid):
-        annotations = self.db.getAllResultsFromDbQuery('select accession, anno_text from prot_fam where '
-                                                  'cdhit_id = {}'.format(cdhitid))
-        annozip = list(zip(annotations))
-        comp = ["".join(c for c in str(entry) if c not in '().",[]') for entry in annozip]
-        comp = [y.replace('||', '/') for y in [x[1:-1].replace("' '", ": ") for x in comp]]
-        comp = [' | '.join(c for c in comp)]
-        return str(comp)[2:-2]
+            if self.assembly_legend[gen_dict[i]] == 'closed':
+                seq_id = 'gi|' + self.strain_legend[gen_dict[i]] + '|{}.0|{}|{}'.format(gen_dict[i], 1, len(seq))
+                seq_rec = SeqRecord(seq, id=seq_id, description='')
+                SeqIO.write(seq_rec, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
+            elif self.assembly_legend[gen_dict[i]] == 'supercontig':
+                contig_locs = list([0])
+                contig_locs.extend(self.spacer_finder(seq))
+                contig_locs.append(len(list(seq)))
+                buff = 0
+                rec_list = []
+                for j in range(1, len(contig_locs)):
+                    start = contig_locs[j-1]+buff
+                    end = contig_locs[j]+buff
+                    contig = seq[start: end]
+                    seq_id = 'gi|' + self.strain_legend[gen_dict[i]] + '|{}.{}|{}|{}'.format(gen_dict[i], j,
+                                                                                        start-buff+1, end-buff)
+                    seq_rec = SeqRecord(contig, id=seq_id, description='')
+                    rec_list.append(seq_rec)
+                    buff += 36
+                SeqIO.write(rec_list, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
 
     def fasta_annotation(self, genomes=None):
         from Bio.Seq import Seq
@@ -1519,35 +1567,94 @@ class GenomeExporter:
         query = [x[0] for x in query]
         gen_dict = dict(enumerate(query))
         for i in range(len(gen_dict.keys())):
-            seq_query = 'SELECT DISTINCT(cdhit_id), seq, start, stop, strand FROM orf WHERE cdhit_id IS NOT NULL AND ' \
+            seq_query = 'SELECT cdhit_id, seq, start, stop, strand FROM orf WHERE cdhit_id IS NOT NULL AND ' \
                         'genome_id = {}'.format(gen_dict[i])
             raw_data = self.db.getAllResultsFromDbQuery(seq_query)
             rec_list = []
-            for j in range(len(raw_data)):
-                seq = Seq(raw_data[j][1], alphabet=IUPAC.unambiguous_dna)
-                cdhit = str(raw_data[j][0])
-                seq_id_list = list((self.strain_legend[gen_dict[i]], cdhit))
-                seq_id_list.append(self.assembly_legend[gen_dict[i]])
-                start = raw_data[j][2]
-                stop = raw_data[j][3]
-                seq_id_list.append(start)
-                seq_id_list.append(stop)
-                if raw_data[j][4] is True:
-                    orient = '+1'
-                elif raw_data[j][4] is False:
-                    orient = '-1'
-                else:
-                    orient = '0'
-                seq_id_list.append(orient)
-                seq_id = ''
-                x = 0
-                while x < len(seq_id_list)-1:
-                    seq_id = seq_id + '{}|'.format(seq_id_list[x])
-                    x += 1
-                seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
-                annotations = self.annotator(cdhit)
-                seq_rec = SeqRecord(seq, id=seq_id, description=annotations)
-                rec_list.append(seq_rec)
-            SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
-            print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #%d'%(i+1)
+            if self.assembly_legend[gen_dict[i]] == 'closed':
+                for j in range(len(raw_data)):
+                    seq = Seq(raw_data[j][1], alphabet=IUPAC.unambiguous_dna)
+                    cdhit = raw_data[j][0]
+                    seq_id_list = ['strain_name=' + self.strain_legend[gen_dict[i]], 'genome_id={}'.format(gen_dict[i]),
+                                   'contig_id=0', 'orf_id={}'.format(cdhit)]
+                    if cdhit in self.cdhit_locus_dict.keys():
+                        locus = self.cdhit_locus_dict[cdhit]
+                        seq_id_list.append('locus_name={}'.format(locus))
+                    else:
+                        seq_id_list.append('locus_name= ')
+                    if cdhit in self.cdhit_gene_dict.keys():
+                        gene = self.cdhit_gene_dict[cdhit]
+                        seq_id_list.append('gene_name={}'.format(gene))
+                    else:
+                        seq_id_list.append('gene_name= ')
+                    start = raw_data[j][2]
+                    seq_id_list.append('start={}'.format(start))
+                    stop = raw_data[j][3]
+                    seq_id_list.append('end={}'.format(stop))
+                    if raw_data[j][4] is True:
+                        orient = '+1'
+                    elif raw_data[j][4] is False:
+                        orient = '-1'
+                    else:
+                        orient = '0'
+                    seq_id_list.append('orientation={}'.format(orient))
+                    seq_id = ''
+                    x = 0
+                    while x < len(seq_id_list)-1:
+                        seq_id = seq_id + '{}|'.format(seq_id_list[x])
+                        x += 1
+                    seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
+                    seq_rec = SeqRecord(seq, id=seq_id, description='')
+                    rec_list.append(seq_rec)
+                SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
 
+            elif self.assembly_legend[gen_dict[i]] == 'supercontig':
+                seq_query = 'SELECT seq FROM genome_seq WHERE genome_id = {}'.format(gen_dict[i])
+                raw_seq = self.db.getAllResultsFromDbQuery(seq_query)
+                gen_seq = Seq(str(raw_seq)[3:-3], alphabet=IUPAC.unambiguous_dna)
+                contig_locs = list([0])
+                contig_locs.extend(self.spacer_finder(gen_seq))
+                contig_locs.append(len(list(gen_seq)))
+                for j in range(len(raw_data)):
+                    seq = Seq(raw_data[j][1], alphabet=IUPAC.unambiguous_dna)
+                    cdhit = raw_data[j][0]
+                    raw_start = raw_data[j][2]
+                    raw_stop = raw_data[j][3]
+                    for n in range(len(contig_locs)-1):
+                        if raw_start < contig_locs[n+1]:
+                            contig_id = n+1
+                            start = raw_start-36*n
+                            stop = raw_stop-36*n
+                            break
+                    seq_id_list = ['strain_name=' + self.strain_legend[gen_dict[i]], 'genome_id={}'.format(gen_dict[i]),
+                                   'contig_id={}'.format(contig_id), 'orf_id={}'.format(cdhit)]
+                    if cdhit in self.cdhit_locus_dict.keys():
+                        locus = self.cdhit_locus_dict[cdhit]
+                        seq_id_list.append('locus_name={}'.format(locus))
+                    else:
+                        seq_id_list.append('locus_name= ')
+                    if cdhit in self.cdhit_gene_dict.keys():
+                        gene = self.cdhit_gene_dict[cdhit]
+                        seq_id_list.append('gene_name={}'.format(gene))
+                    else:
+                        seq_id_list.append('gene_name= ')
+                    seq_id_list.append('start={}'.format(start))
+                    seq_id_list.append('end={}'.format(stop))
+                    if raw_data[j][4] is True:
+                        orient = '+1'
+                    elif raw_data[j][4] is False:
+                        orient = '-1'
+                    else:
+                        orient = '0'
+                    seq_id_list.append('orientation={}'.format(orient))
+                    seq_id = ''
+                    x = 0
+                    while x < len(seq_id_list)-1:
+                        seq_id = seq_id + '{}|'.format(seq_id_list[x])
+                        x += 1
+                    seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
+                    seq_rec = SeqRecord(seq, id=seq_id, description='')
+                    rec_list.append(seq_rec)
+                SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
