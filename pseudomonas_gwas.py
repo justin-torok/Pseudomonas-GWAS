@@ -1506,6 +1506,10 @@ class GenomeExporter:
         return spalocs
 
     def fasta_genome(self, genomes=None):
+        """
+        The genomes in pa2 are either closed or consist of several long contigs that have been concatenated together and
+        separated by a characteristic 36-bp spacer.  Determining the true
+        """
         from Bio.Seq import Seq
         from Bio.Alphabet import IUPAC
         from Bio.SeqRecord import SeqRecord
@@ -1526,8 +1530,13 @@ class GenomeExporter:
             seq_query = 'SELECT seq FROM genome_seq WHERE genome_id = {}'.format(gen_dict[i])
             raw_data = self.db.getAllResultsFromDbQuery(seq_query)
             seq = Seq(str(raw_data)[3:-3], alphabet=IUPAC.unambiguous_dna)
+            strain_note = 'strain_name={}'.format(self.strain_legend[gen_dict[i]])
+            gen_note = 'genome_id={}'.format(gen_dict[i])
             if self.assembly_legend[gen_dict[i]] == 'closed':
-                seq_id = 'gi|' + self.strain_legend[gen_dict[i]] + '|{}.0|{}|{}'.format(gen_dict[i], 1, len(seq))
+                contig_note = 'contig_id=0'
+                start_note = 'start=1'
+                end_note = 'end={}'.format(len(seq))
+                seq_id = 'gi|' + strain_note + '|' + gen_note + '|' + contig_note + '|' + start_note + '|' + end_note
                 seq_rec = SeqRecord(seq, id=seq_id, description='')
                 SeqIO.write(seq_rec, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
                 print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
@@ -1535,17 +1544,22 @@ class GenomeExporter:
                 contig_locs = list([0])
                 contig_locs.extend(self.spacer_finder(seq))
                 contig_locs.append(len(list(seq)))
-                buff = 0
+                buff = 36
                 rec_list = []
-                for j in range(1, len(contig_locs)):
-                    start = contig_locs[j-1]+buff
-                    end = contig_locs[j]+buff
+                for j in range(len(contig_locs)-1):
+                    if j == 0:
+                        start = contig_locs[j]   # This is the Pythonic start of the sequence in 'seq'
+                    else:
+                        start = contig_locs[j]+buff
+                    end = contig_locs[j+1]   # This is 1 + the Pythonic end in 'seq'; i.e. the start of the next spacer
                     contig = seq[start: end]
-                    seq_id = 'gi|' + self.strain_legend[gen_dict[i]] + '|{}.{}|{}|{}'.format(gen_dict[i], j,
-                                                                                        start-buff+1, end-buff)
+                    contig_note = 'contig_id={}'.format(j+1)
+                    start_note = 'start={}'.format(1+start-buff*j)
+                    end_note = 'end={}'.format(end-buff*j)
+                    seq_id = 'gi|' + strain_note + '|' + gen_note + '|' + contig_note + '|' + \
+                             start_note + '|' + end_note
                     seq_rec = SeqRecord(contig, id=seq_id, description='')
                     rec_list.append(seq_rec)
-                    buff += 36
                 SeqIO.write(rec_list, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
                 print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
 
