@@ -1,48 +1,45 @@
 """
-To do (as of 12/3/15):
+This file creates several classes to facilitate linear regression using several scientific computing packages within
+Python.
 
-1. PseudomonasDataframes.phenotype_dataframe: Import new phenotypes
-2. PCA/GLS_Plotter.manhattan: Exchange word_id for start (multiple assignments in pa2??)
-3. PCA/GLS_Regression.significant_hits_summary: Include std_locus_name (multiple assignments in pa2??)
-5. Maximum Entropy approach?
-
-This file creates several classes to facilitate linear regression using several
-scientific computing packages within Python.
-
-This module is meant to be used in the following way: 1) create a complete_dataframe
-object using the PseudomonasDataframes class (OR build a custom binary genotype df); 
-2) use this df as an argument for instances of the other classes. The reason for
-doing it this way is that the most computationally-intensive step is the creation 
-of the genotype dataframe, so only building it once and using it repeatedly 
-facilitates faster analysis than if it is built de novo each time an analysis 
-class is instantiated.
+This module is meant to be used in the following way: 1) create a complete_dataframe object using the
+PseudomonasDataframes class (OR build a custom binary genotype df); 2) use this df as an argument for instances of the
+other classes. The reason for doing it this way is that the most computationally-intensive step is the creation of the
+genotype dataframe, so only building it once and using it repeatedly facilitates faster analysis than if it is built de
+novo each time an analysis class is instantiated.  Check the list of imports for the necessary packages to run this
+file to make sure that there are no missing dependencies.
 
 Author: Justin Torok, jlt46@cornell.edu
-Last updated: 12/17/2015
+Last updated: 2/16/2015
 
-Note: If SpringDb_local can't find the server, it may not be running; use the following command
-in the terminal: 'pg_ctl -D /usr/local/var/postgres -l /usr/local/var/postgres/server.log start'
+Note: If SpringDb_local can't find the server, it may not be running; use the following command in the terminal:
+'pg_ctl -D /usr/local/var/postgres -l /usr/local/var/postgres/server.log start' (or the equivalent paths in PostgreSQL)
 to manually start the server.
 """
-import SpringDb_local as sdb #Accession to database; see SpringDb_local for details
+import SpringDb_local as sdb
 reload(sdb)
 import numpy as np
 import pandas as pd
-from Bio.Seq import Seq #mutation analysis
-from Bio.Alphabet import IUPAC #mutation analysis
-import pylab #graphical output
-from patsy import dmatrices #Linear regression
-import statsmodels.api as sm #Linear regression
-from sklearn.decomposition import RandomizedPCA     # Linear regression
-from scipy.stats import chi2 #Linear regression
+from Bio.Seq import Seq
+from Bio.Alphabet import IUPAC
+import pylab
+from patsy import dmatrices
+import statsmodels.api as sm
+from sklearn.decomposition import RandomizedPCA
+from scipy.stats import chi2
 from scipy.stats import f
+
 #%%
+
 class MiscFunctions:
     """
     All methods that would otherwise be called as static methods will be placed in this class, so that all of the
     classes below can access them.  These methods are required for multiple classes and this is more concise than
     redefining the functions each time.
     """
+    def __init__(self):
+        pass
+
     def zscore(self, vector):
         mean, std = vector.mean(), vector.std()
         zscores = (vector-mean)/std
@@ -86,8 +83,7 @@ class PseudomonasDataframes:
     """
     Methods build several useful pandas dataframes containing genotype and 
     phenotype information that is imported from a postgres database.  These
-    dataframes are used in downstream PCA and regression analysis, but may also
-    be used for other purposes; in particular, the maximum entropy approach.
+    dataframes are used in downstream PCA and regression analysis.
     """
     def __init__(self, phenotype=True, query=None):
         """
@@ -122,27 +118,25 @@ class PseudomonasDataframes:
         Import database of orfs (orthids and the genotypes) of selected strains.
         """
         # Build initial table
-        table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf WHERE genome_id IN %s AND cdhit_id \
-                                                IS NOT NULL'%(str(tuple(self.strains))))
+        table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf WHERE genome_id IN %s AND \
+                                                cdhit_id IS NOT NULL'%(str(tuple(self.strains))))
         orfgenarray = np.array(list(set(table)))    # Removes redundant pairs and converts to an array
 
-        orfs = orfgenarray[:,0]
+        orfs = orfgenarray[:, 0]
         uni_orfs = np.unique(orfs)
         series_orfs = pd.Series(np.arange(len(uni_orfs)), index=uni_orfs)
         ind_orfs = series_orfs[orfs].values     # Establishes an arbitrary index for each unique orf
 
-        genomes = orfgenarray[:,1]
+        genomes = orfgenarray[:, 1]
         uni_genomes = np.unique(genomes)
         series_genomes = pd.Series(np.arange(len(uni_genomes)), index=uni_genomes)
         ind_genomes = series_genomes[genomes].values    # Establishes an arbitrary index for each unique genome (strain)
 
         presence_absence_table = np.zeros((np.shape(uni_orfs)[0],
                                            np.shape(uni_genomes)[0]), dtype=int)
-        presence_absence_table[ind_orfs,ind_genomes] = 1 # Each unique (orf, genome) pair from the query substitutes a
-                                                         # '1' for a '0' using the preestablished indices.
-        presence_absence_df = pd.DataFrame(presence_absence_table,
-                                   index=uni_orfs,
-                                   columns=uni_genomes)
+        presence_absence_table[ind_orfs, ind_genomes] = 1    # Each unique (orf, genome) pair from the query substitutes
+                                                             # a '1' for a '0' using the preestablished indices.
+        presence_absence_df = pd.DataFrame(presence_absence_table, index=uni_orfs, columns=uni_genomes)
         return presence_absence_df
 
     # Originally the following method was the default; however, at this point it is important for the presence of a
@@ -152,35 +146,32 @@ class PseudomonasDataframes:
         """
         Same as the previous method, except the ancestral state is set to '0' for the presence/absence of a gene.
         """
-        table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf WHERE genome_id IN %s AND cdhit_id \
-                                                IS NOT NULL'%(str(tuple(self.strains))))
+        table = self.db.getAllResultsFromDbQuery('SELECT cdhit_id, genome_id FROM orf WHERE genome_id IN %s AND \
+                                                 cdhit_id IS NOT NULL'%(str(tuple(self.strains))))
         orfgenarray = np.array(list(set(table)))
 
-        orfs = orfgenarray[:,0]
+        orfs = orfgenarray[:, 0]
         uni_orfs = np.unique(orfs)
         series_orfs = pd.Series(np.arange(len(uni_orfs)), index=uni_orfs)
         ind_orfs = series_orfs[orfs].values
 
-        genomes = orfgenarray[:,1]
+        genomes = orfgenarray[:, 1]
         uni_genomes = np.unique(genomes)
         series_genomes = pd.Series(np.arange(len(uni_genomes)), index=uni_genomes)
         ind_genomes = series_genomes[genomes].values
 
-        presence_absence_table = np.zeros((np.shape(uni_orfs)[0],
-                                           np.shape(uni_genomes)[0]), dtype=int)
-        presence_absence_table[ind_orfs,ind_genomes] = 1
+        presence_absence_table = np.zeros((np.shape(uni_orfs)[0], np.shape(uni_genomes)[0]), dtype=int)
+        presence_absence_table[ind_orfs, ind_genomes] = 1
 
         # Convert to the convention that the predominant genotype gets a value of 0
         filter_table = []
         for i in range(np.size(uni_orfs)):
-            entry = sum(presence_absence_table[i,:])>len(self.strains)/2
+            entry = sum(presence_absence_table[i, :]) > len(self.strains)/2
             filter_table.append(entry)
-        filter_table = np.array(filter_table) #Boolean array used as an index
-        presence_absence_table[filter_table,:] = presence_absence_table[filter_table,:]+1
+        filter_table = np.array(filter_table)   # Boolean array used as an index
+        presence_absence_table[filter_table, :] = presence_absence_table[filter_table, :]+1
         presence_absence_table[presence_absence_table == 2] = 0
-        presence_absence_df = pd.DataFrame(presence_absence_table,
-                                           index=uni_orfs,
-                                           columns=uni_genomes)
+        presence_absence_df = pd.DataFrame(presence_absence_table, index=uni_orfs, columns=uni_genomes)
         return presence_absence_df
 
     def core_genome(self):
@@ -214,31 +205,28 @@ class PseudomonasDataframes:
 
     def get_orth_list(self):
         """
-        Obtains the (stable) cdhit_ids, orth_ids for which in-frame, aligned
-        sequences are available. Currently this includes batches 1 (1921) and 3 (1059).
+        Obtains the (stable) cdhit_ids, orth_ids for which in-frame, aligned sequences are available. Currently this
+        includes batches 1 (1921) and 3 (1059) in orf.
         """
-        query = 'SELECT DISTINCT ON(cdhit_id, orth_id) cdhit_id, orth_id FROM orf WHERE \
-                orth_batch_id = 1 or orth_batch_id = 3'
+        query = 'SELECT DISTINCT ON(cdhit_id, orth_id) cdhit_id, orth_id FROM orf WHERE orth_batch_id = 1 or \
+                orth_batch_id = 3'
         table = self.db.getAllResultsFromDbQuery(query)
         table = np.array(sorted(table, key=lambda x: x[0]))
         return table[:, 0].tolist()
 
     def get_protein_mutation_dataframe(self, orthlist=None, genomelist=None, overrule=True):
         """
-        Takes a valid orthid list and genome list and queries the database, 
-        returning a dataframe containing a binary representation of the 
-        presence/absence of all nonsynonymous SNPs for the queried orfs and genomes.
-        The predominant residue is given a 0. The default is to compile a table
-        using all orthologs (from batches 1 and 3) and genomes, but
-        these can be specified. Both of these batches have fully aligned, high-
-        quality sequences, so there is no need at this time to do an alignment.
+        Takes a valid orthid list and genome list and queries the database, returning a dataframe containing a binary
+        representation of the presence/absence of all nonsynonymous SNPs for the queried orfs and genomes.
+        The predominant residue is given a 0. The default is to compile a table using all orthologs (from batches 1 and
+        3) and genomes, but these can be specified. Both of these batches have fully aligned, high-quality sequences, so
+        there is no need at this time to do an alignment.
         
         
-        In the case that there is only partial sequence information available 
-        for a given orth, the exception is handled and a dataframe containing 
-        the orths which have missing sequences is optionally returned instead of 
-        the binary dataframe if overrule is set to False. Otherwise the binary 
-        matrix containing all the successfully parsed sequences is returned (default).
+        In the case that there is only partial sequence information available for a given orth, the exception is handled
+        and a dataframe containing the orths which have missing sequences is optionally returned instead of the binary
+        dataframe if overrule is set to False. Otherwise the binary matrix containing all the successfully parsed
+        sequences is returned (default).
         """
         # Default is all 30 genomes, all orfs
         if genomelist is None:
@@ -256,23 +244,22 @@ class PseudomonasDataframes:
             try:
                 genometuples = tuple(genomelist)
                 dbquery = 'SELECT cdhit_id, genome_id, seq_inframe_aligned FROM \
-                view_orth WHERE genome_id IN %s AND cdhit_id = %s'%(str(genometuples),
-                                                                       str(orth))
+                view_orth WHERE genome_id IN %s AND cdhit_id = %s'%(str(genometuples), str(orth))
                 infotable = self.db.getAllResultsFromDbQuery(dbquery)
                 for i in range(np.shape(infotable)[0]):
                     infotable[i] = list(infotable[i])
                 infoarray = np.array(sorted(infotable, key=lambda x: x[1]))
             
-                #Create aligned array of amino acid sequences for each orf/genome
-                dnas = [len(list(x)) for x in infoarray[:,2]]
+                # Create aligned array of amino acid sequences for each orf/genome
+                dnas = [len(list(x)) for x in infoarray[:, 2]]
                 if dnas.count(dnas[0]) == len(dnas):
-                    if dnas[0]%3 == 0:
+                    if dnas[0] % 3 == 0:
                         protlen = dnas[0]/3
-                        aminoacidarray = np.zeros((np.shape(infoarray)[0],protlen), dtype=str)
+                        aminoacidarray = np.zeros((np.shape(infoarray)[0], protlen), dtype=str)
                         for i in range(np.shape(aminoacidarray)[0]):
                             dnaseq = Seq(infoarray[i][2], IUPAC.unambiguous_dna)
                             protseq = dnaseq.translate()
-                            aminoacidarray[i,:] = np.array(list(protseq))
+                            aminoacidarray[i, :] = np.array(list(protseq))
                         print 'Orth %s parsed successfully.'%(str(orth))
                     else:
                         print 'Orth %s seqs cannot be converted to protein seqs'%(str(orth))
@@ -281,9 +268,9 @@ class PseudomonasDataframes:
                     print 'Orth %s seqs are of different lengths, cannot align.'%(str(orth))
                     continue
                 
-                #Create mutation table
+                # Create mutation table
                 for i in range(protlen):
-                    resarray = aminoacidarray[:,i]
+                    resarray = aminoacidarray[:, i]
                     if np.size(np.unique(resarray)) != 1:
                         rescountdict = {}
                         for res in np.unique(resarray):
@@ -305,7 +292,7 @@ class PseudomonasDataframes:
                         missinglist.append(np.array([row[0], row[1]]))
                 continue
             
-        #Generate final dataframe
+        # Generate final dataframe
         if len(mutationlistindex) == 0:
             print 'No mutations detected.'
         elif len(missinglist) != 0 and overrule is False:
@@ -327,45 +314,44 @@ class PseudomonasDataframes:
         BioPython methods and then compared, which excludes all synonymous SNPs, whereas the comparisons
         made here are at the genetic sequence level.
         """
-        #Default is all 30 genomes, all orfs
+        # Default is all 30 genomes, all orfs
         if genomelist is None:
             genomelist = self.strains
         if orthlist is None:
             orthlist = self.get_orth_list()
 
-        #Respository for mutation ids and presence/absence matrix, respectively
+        # Respository for mutation ids and presence/absence matrix, respectively
         mutationlistindex = []
         mutationbinary = []
         missinglist = []
 
-        #Query database, obtain infoarray. An exception for missing sequences is handled
+        # Query database, obtain infoarray. An exception for missing sequences is handled
         for orth in orthlist:
             try:
                 genometuples = tuple(genomelist)
                 dbquery = 'SELECT cdhit_id, genome_id, seq_inframe_aligned FROM \
-                view_orth WHERE genome_id IN %s AND cdhit_id = %s'%(str(genometuples),
-                                                                       str(orth))
+                view_orth WHERE genome_id IN %s AND cdhit_id = %s'%(str(genometuples), str(orth))
                 infotable = self.db.getAllResultsFromDbQuery(dbquery)
                 for i in range(np.shape(infotable)[0]):
                     infotable[i] = list(infotable[i])
-                infoarray = np.array(sorted(infotable, key=lambda x: x[1]))
+                infoarray = np.array(sorted(infotable, key=lambda k: k[1]))
 
-                #Create aligned array of amino acid sequences for each orf/genome
-                dnas = [len(list(x)) for x in infoarray[:,2]]
+                # Create aligned array of amino acid sequences for each orf/genome
+                dnas = [len(list(x)) for x in infoarray[:, 2]]
                 if dnas.count(dnas[0]) == len(dnas):
                     seqlen = dnas[0]
-                    nucleotidearray = np.zeros((np.shape(infoarray)[0],seqlen), dtype=str)
+                    nucleotidearray = np.zeros((np.shape(infoarray)[0], seqlen), dtype=str)
                     for i in range(np.shape(nucleotidearray)[0]):
                         dnaseq = Seq(infoarray[i][2], IUPAC.unambiguous_dna)
-                        nucleotidearray[i,:] = np.array(list(dnaseq))
+                        nucleotidearray[i, :] = np.array(list(dnaseq))
                     print 'Orth %s parsed successfully.'%(str(orth))
                 else:
                     print 'Orth %s seqs are of different lengths, cannot align.'%(str(orth))
                     continue
 
-                #Create mutation table
+                # Create mutation table
                 for i in range(seqlen):
-                    basearray = nucleotidearray[:,i]
+                    basearray = nucleotidearray[:, i]
                     if np.size(np.unique(basearray)) != 1:
                         basecountdict = {}
                         for base in np.unique(basearray):
@@ -384,10 +370,10 @@ class PseudomonasDataframes:
                 print '%d did not parse because of missing seqs.'%(orth)
                 for row in infoarray:
                     if row[2] is None:
-                        missinglist.append(np.array([row[0],row[1]]))
+                        missinglist.append(np.array([row[0], row[1]]))
                 continue
 
-        #Generate final dataframe
+        # Generate final dataframe
         if len(mutationlistindex) == 0:
             print 'No mutations detected.'
         elif len(missinglist) != 0 and overrule == False:
@@ -399,8 +385,7 @@ class PseudomonasDataframes:
         else:
             print 'Orths parsed successfully. Returning binary dataframe.'
             mutationarray = np.array(mutationbinary)
-            mutationdf = pd.DataFrame(mutationarray, index=mutationlistindex,
-                                      columns=genomelist)
+            mutationdf = pd.DataFrame(mutationarray, index=mutationlistindex, columns=genomelist)
             return mutationdf
             
     def complete_dataframe(self, synonymous=False, write=False):
@@ -429,19 +414,17 @@ class PseudomonasDataframes:
         return either the binned (binary) representation of biofilm formation 
         and swarming or the normalized analog representation is given, with the
         default set to binary. Additional phenotypes and custom queries may be 
-        added in the future as the need arises.  As of 9/28/15, there are many
-        more phenotypes to examine - waiting for them to be uploaded into the
-        database.
+        added in the future as the need arises.
 
-        The default values for 'cutoffs' are those used in the paper to cluster
+        The default values for 'cutoffs' are those previously used to cluster
         the biofilm and swarming phenotypes. Since phenotypes will need to be
         converted to binary, determining an appropriate cutoff and then creating
         the dataframe with that value seems like the most economical option to
         accommodate additional phenotypes.
         """
         cols = ['genome_id'] + phenlist
-        phen_dat = self.db.getAllResultsFromDbQuery('SELECT %s FROM phenotype WHERE genome_id \
-                                                    IN %s'%(', '.join(cols), str(tuple(self.strains))))
+        phen_dat = self.db.getAllResultsFromDbQuery('SELECT %s FROM phenotype WHERE genome_id IN %s'%(', '.join(cols),
+                                                    str(tuple(self.strains))))
         phen_arr = np.array(phen_dat)
 
         phen_df_cont = pd.DataFrame(phen_arr, columns=cols)
@@ -469,7 +452,7 @@ class PseudomonasDataframes:
             return phen_df_cont
         # Note: The index of phen_df is arbitrary at this stage, but it becomes convenient for downstream operations
             
-    def swarm_biofilm_plot(self, write=False):
+    def swarm_biofilm_plot(self, save=False):
         """
         This function creates a scatterplot that is divided into four regions as 
         determined by k-means clustering (performed elsewhere; the red lines are 
@@ -479,25 +462,25 @@ class PseudomonasDataframes:
         """
         phen_dat = self.db.getAllResultsFromDbQuery('select genome_id, swarm_diameter, biofilm from phenotype')
         phen_dat = np.array(phen_dat)
-        swarm = phen_dat[:,1]
-        biofilm = phen_dat[:,2]
-        nonsnonb = phen_dat[(swarm<25)&(biofilm<1.2)]
-        snonb = phen_dat[(swarm>25)&(biofilm<1.2)]
-        nonsb = phen_dat[(swarm<25)&(biofilm>1.2)]
-        sb = phen_dat[(swarm>25)&(biofilm>1.2)]
-        plot1 = pylab.plot(nonsnonb[:,1], nonsnonb[:,2], 'go')
-        plot2 = pylab.plot(snonb[:,1], snonb[:,2], 'bo')
-        plot3 = pylab.plot(nonsb[:,1], nonsb[:,2], 'mo')
-        plot4 = pylab.plot(sb[:,1], sb[:,2], 'co')
-        plot5 = pylab.plot([0,80],[1.2,1.2],'r-')
-        plot6 = pylab.plot([25,25],[-0.5,3],'r-')
+        swarm = phen_dat[:, 1]
+        biofilm = phen_dat[:, 2]
+        nonsnonb = phen_dat[(swarm < 25) & (biofilm < 1.2)]
+        snonb = phen_dat[(swarm > 25) & (biofilm < 1.2)]
+        nonsb = phen_dat[(swarm < 25) & (biofilm > 1.2)]
+        sb = phen_dat[(swarm > 25) & (biofilm > 1.2)]
+        plot1 = pylab.plot(nonsnonb[:, 1], nonsnonb[:, 2], 'go')
+        plot2 = pylab.plot(snonb[:, 1], snonb[:, 2], 'bo')
+        plot3 = pylab.plot(nonsb[:, 1], nonsb[:, 2], 'mo')
+        plot4 = pylab.plot(sb[:, 1], sb[:, 2], 'co')
+        plot5 = pylab.plot([0, 80], [1.2, 1.2], 'r-')
+        plot6 = pylab.plot([25, 25], [-0.5, 3], 'r-')
         pylab.xlabel('Swarm Diameter (mm)')
         pylab.ylabel('Biofilm Index')
         pylab.title('P. aeruginosa Phenotypes')
-        if write is True:
+        if save is True:
             from datetime import date
-            filename = 'phenotypes_scatterplot_'+str(date.today())+'.png'
-            pylab.savefig(filename)
+            filename = 'phenotypes_scatterplot_'+str(date.today())+'.svg'
+            pylab.savefig(filename, format='svg')
         pylab.show()
 
     def core_genome_bar(self, flip=False, save=False):
@@ -531,8 +514,8 @@ class PseudomonasDataframes:
             pylab.show()
             if save is True:
                 from datetime import date
-                filename = 'core_fraction_bar_'+str(date.today())+'.png'
-                pylab.savefig(filename)
+                filename = 'core_fraction_bar_'+str(date.today())+'.svg'
+                pylab.savefig(filename, format='svg')
         else:
             height = 1.0
             bars = ax.barh(ind, strleg['Fraction'], height=height)
@@ -548,13 +531,13 @@ class PseudomonasDataframes:
             pylab.show()
             if save is True:
                 from datetime import date
-                filename = 'core_fraction_bar_flip_'+str(date.today())+'.png'
-                pylab.savefig(filename)
+                filename = 'core_fraction_bar_flip_'+str(date.today())+'.svg'
+                pylab.savefig(filename, format='svg')
 
     def rarefaction_curves(self, iterations=30, save=False):
         """
         Generates the rarefaction curves for the core genome, accessory genome, and pan genome, using a specified number
-        of iterations.  The error bars are one standard deviation from the mean.
+        of iterations.  The error bars are one standard deviation from the mean.  Creates a .svg file if save is True.
         """
         totalgen = self.raw_presence_absence_dataframe()
         strnum = len(self.strains)
@@ -617,8 +600,8 @@ class PseudomonasDataframes:
 
         if save is True:
             from datetime import date
-            filename = 'rarefaction_curves_'+str(date.today())+'.png'
-            pylab.savefig(filename)
+            filename = 'rarefaction_curves_'+str(date.today())+'.svg'
+            pylab.savefig(filename, format='svg')
 
     def snp_vs_presence(self, mut=None, save=False):
         """
@@ -654,12 +637,12 @@ class PseudomonasDataframes:
 
         if save is True:
             from datetime import date
-            filename = 'snp_presence_'+str(date.today())+'.png'
-            pylab.savefig(filename)
+            filename = 'snp_presence_'+str(date.today())+'.svg'
+            pylab.savefig(filename, format='svg')
 
     def pairwise_diff_plot(self, mut=None, save=False):
         """
-        This plots the differences between each pair of strains in terms of presence/absence of genes and nonsyn. SNPs
+        This plots the differences between each pair of strains in terms of presence/absence of genes and nonsyn. SNPs.
         """
         if mut is None:
             mutgen = self.get_protein_mutation_dataframe()
@@ -701,10 +684,11 @@ class PseudomonasDataframes:
 
         if save is True:
             from datetime import date
-            filename = 'strain_diffs_'+str(date.today())+'.png'
-            pylab.savefig(filename)
+            filename = 'strain_diffs_'+str(date.today())+'.svg'
+            pylab.savefig(filename, format='svg')
 
 #%%
+
 class PCA_Tools:
     """
     This class has a number of methods associated with related to outputting 
@@ -713,7 +697,7 @@ class PCA_Tools:
     http://scikit-learn.org/stable/modules/generated/sklearn.decomposition.RandomizedPCA.html).
     This fit object is then passed to the methods defined below.
     """
-    def __init__(self, df, ncomps=20):
+    def __init__(self, df, ncomps=10):
         """
         The df to be passed is meant to be a complete_dataframe object, but it 
         will work on any dataframe assuming that it is arrayed as
@@ -733,24 +717,23 @@ class PCA_Tools:
         """
         Builds a dataframe of principal components.
         """
-        pca_arr = self.pcafit.components_.T  #default is to have PCs along the 0 axis
+        pca_arr = self.pcafit.components_.T  # default is to have PCs along the 0 axis
         pcacols = ['PC%d'%(x) for x in np.arange(1, np.shape(pca_arr)[1]+1)]
-        pca_df = pd.DataFrame(pca_arr, index=np.arange(1,np.shape(pca_arr)[0]+1),
-                              columns=pcacols)
+        pca_df = pd.DataFrame(pca_arr, index=np.arange(1, np.shape(pca_arr)[0]+1), columns=pcacols)
         return pca_df
     
     def variance_histogram(self, write=False):
         """
-        Outputs a histogram showing the distribution of explained variance by
-        each principal component. Option to write to .png file.
+        Outputs a histogram showing the distribution of explained variance by each principal component. Option to write
+        to a .png file.
         """
         expvar = self.pcafit.explained_variance_ratio_
-        histplot = pylab.bar(np.arange(1,self.ncomps+1), expvar)
+        histplot = pylab.bar(np.arange(1, self.ncomps+1), expvar)
         pylab.xlabel('PC #')
         pylab.ylabel('Density')
         percentv = 100*sum(expvar)
         pylab.title('Total explained variance is %f percent'%(percentv))
-        if write == True:
+        if write is True:
             from datetime import date
             filename = 'pca_variance_histogram'+str(date.today())+'.png'
             pylab.savefig(filename)
@@ -769,24 +752,19 @@ class PCA_Tools:
         pylab.xlabel(princomp1)
         pylab.ylabel(princomp2)
         pylab.title(princomp1+' vs '+princomp2)
-        if write == True:
+        if write is True:
             from datetime import date
             filename = 'pc_2d_scatterplot'+str(date.today())+'.png'
             pylab.savefig(filename)
         pylab.show()
-        # More to come as desired
+    # More to come as desired
+
 #%%
 class PCA_Regression:
     """
     This class is designed to contain all relevant functions to conduct a linear
-    regression using principal components as covariates (or not). 
-    
-    Currently these methods are set up to generate the outputs shown in the
-    'Xavier Lab Meeting 7-6-15' presentation, but the code should be a useful 
-    template should other types of regression analysis become worthwhile to 
-    pursue.
-    
-    A conceptual overview of the approach:
+    regression using principal components as covariates (or not). A conceptual
+    overview of the approach:
     1) Convert the 30-digit (at this time) binary arrays corresponding to each  
     genotypic feature into their decimal representations (herein referred to as 
     'words').
@@ -856,7 +834,7 @@ class PCA_Regression:
                 pvals.append(pval1)
             logp = -np.log10(pvals)
             phenpvaldf[phen] = np.array(logp)
-        print 'Finished'
+        print 'Simple regression finished'
         return phenpvaldf
         
     def pca_regression(self, princomps=3, intercept=True, phenotypes=['biofilm', 'swarm_diameter']):
@@ -865,11 +843,9 @@ class PCA_Regression:
         principal components as covariates. A likelihood ratio test is employed 
         to test the null and alternative models (an F-statistic could be found 
         as well, but this seemed easier to implement in StatsModels and there is
-        virtually no difference between the results of both). Again, the intercept 
-        as a variable has not been explored yet but the option is included here.
-        
-        bio and swarm are specified as in simple_regression. This can probably 
-        be written more succinctly (See docstring of simple_regression).
+        virtually no difference between the results of both when I tested them).
+        Again, the intercept as a variable has not been explored yet but the option
+        is included here.
         """
         compdf = self.complete_df
         phenpvaldf = pd.DataFrame(np.zeros((self.word_count, len(phenotypes))), index=np.arange(1, self.word_count+1),
@@ -906,7 +882,7 @@ class PCA_Regression:
                 pvals.append(pval1)
             logp = -np.log10(pvals)
             phenpvaldf[phenotype] = np.array(logp)
-        print 'Finished'
+        print 'PC regression finished'
         return phenpvaldf
 
     def significant_hit_arrays(self, simple=False, princomps=3, intercept=True, phenotype='biofilm', signif=0.05):
@@ -934,19 +910,19 @@ class PCA_Regression:
         fulldf = pd.concat((compdf[phenlist], hitsdf), axis=1)
         return fulldf
     
-    def significant_hits_summary(self, simple=False, princomps=3,
-                                 intercept=True, phenotype='biofilm', signif=0.05, write=False):
+    def significant_hits_summary(self, simple=False, princomps=3, intercept=True, phenotype='biofilm', signif=0.05,
+                                 write=False):
         """
         This function is similar to the previous one and shares much of the same 
         code, but returns a dataframe (can write to file) that contains all the 
         important information about the significant hits.
         
-        For the moment, phenotype can either be set to bio or swarm, but both are 
+        For the moment, phenotype can either be set to biofilm or swarm diameter, but both are
         not handled together. That flexibility should be added in a future version
         (see docstrings for significant_hits_array and simple_regression).
 
         Additionally, currently cdhit_id is used to index, but in the future this should
-        be converted to the standard locus names (or they should just be added)
+        be converted to the standard locus names (or they should just be added).
         """
         if simple is True:
             pvaldf = self.simple_regression(intercept=intercept, phenotypes=[phenotype])
@@ -963,6 +939,7 @@ class PCA_Regression:
         sighits.index = ['word%d' % x for x in sighits.index]
         hitsdf = compdf[sighits.index]
         wordsarray = np.dot(self.gen_df, 2**np.arange(0, len(self.strains))).reshape(np.shape(self.gen_df)[0], 1)
+
         # Recall that self.unique_words_df contains the word id strings indexed by word (decimal) values
         wordidsarray = np.array([self.unique_words_df.ix[word]
                                  for word in wordsarray]).reshape(np.shape(self.gen_df)[0], 1)
@@ -971,6 +948,7 @@ class PCA_Regression:
         hitwords = np.dot(hitsdf.values.T, 2**np.arange(0, len(self.strains)))
         filterlist = [x in hitwords for x in wordsdf['words']]
         sumwordidsdf = wordsdf[filterlist]
+
         # np.squeeze is necessary below because the listcomp won't work with a column vector, which is 2D
         pvalarray = np.array([sighits.ix[wordid] for wordid in np.squeeze(sumwordidsdf['wordids'])])
         sumdf = pd.DataFrame(pvalarray, index=sumwordidsdf.index, columns=['-log(p_values)'])
@@ -978,8 +956,8 @@ class PCA_Regression:
             from datetime import date
             filename = 'hits_summary_'+phenotype+'_'+str(date.today())+'.csv'
             sumdf.to_csv(filename)
+        print 'Returning significant hits:'
         return sumdf
-
 #%%
 class PCA_Plotter:
     """
@@ -988,18 +966,18 @@ class PCA_Plotter:
     of the Regression class.
 
     Currently it plots using word ids, but in later versions it should plot by
-    genomic position instead.
+    genomic position (in PA14, for example) instead.
     """
-    def __init__(self, gen_df, simple=False, princomps=3, intercept=True,
-                 phens=['biofilm', 'swarm_diameter'], signif=0.05):
+    def __init__(self, gen_df, simple=False, princomps=3, intercept=True, signif=0.05):
         self.gen_df = gen_df
         reg = PCA_Regression(self.gen_df)
+        self.phens = ['biofilm', 'swarm_diameter']
         if simple is True:
-            self.pvaldf = reg.simple_regression(intercept=intercept, phenotypes=phens)
+            self.pvaldf = reg.simple_regression(intercept=intercept, phenotypes=self.phens)
         else:
-            self.pvaldf = reg.pca_regression(princomps=princomps, intercept=intercept, phenotypes=phens)
+            self.pvaldf = reg.pca_regression(princomps=princomps, intercept=intercept, phenotypes=self.phens)
         self.bonferroni = -np.log10(signif/np.size(self.pvaldf))
-        self.phens = phens
+        self.phens = ['biofilm', 'swarm_diameter']
 
     def qq(self, phenotype=None,  write=False):
         if phenotype is None:
@@ -1014,8 +992,8 @@ class PCA_Plotter:
         pylab.title('PCA Q-Q Plot: %s'%(phenotype))
         if write is True:
             from datetime import date
-            filename = 'qq_'+phenotype+'_'+str(date.today())+'.png'
-            pylab.savefig(filename)
+            filename = 'qq_'+phenotype+'_'+str(date.today())+'.svg'
+            pylab.savefig(filename, format='svg')
         pylab.show()
 
     def manhattan(self, phenotype=None, write=False):
@@ -1023,21 +1001,20 @@ class PCA_Plotter:
             phenotype = self.phens[0]
         pvaldf = self.pvaldf[phenotype]
         graph1 = pylab.plot(pvaldf.index, pvaldf.values, 'bo')
-        graph2 = pylab.plot([pvaldf.index[0], pvaldf.index[-1]],
-                            [self.bonferroni, self.bonferroni], 'r-')
+        graph2 = pylab.plot([pvaldf.index[0], pvaldf.index[-1]], [self.bonferroni, self.bonferroni], 'r-')
         pylab.xlabel('word id')
         pylab.ylabel('-log10(p-val)')
         pylab.title('PCA Manhattan Plot: %s'%(phenotype))
         if write is True:
             from datetime import date
-            filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.png'
-            pylab.savefig(filename)
+            filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.svg'
+            pylab.savefig(filename, format='svg')
         pylab.show()
 
 class GLS_Regression:
     """
     This class contains all the necessary components to perform a GLS regression using the covariance matrix generated
-    from the genotype dataframe to account for relatedness between strains. See the docstrings for individual methods
+    from the genotype dataframe to account for relatedness between strains. See the docstrings of individual methods
     for further information.
     """
     def __init__(self, gen_df, phens=['biofilm', 'swarm_diameter'], binary_phen=True):
@@ -1111,7 +1088,6 @@ class GLS_Regression:
         fstat = ssr/(sse/28)
         pval = 1-f.cdf(fstat, 1, 28)
         summary = pd.Series([float(beta[0]), float(beta[1]), rsq, pval], index=['Intercept', 'Slope', 'R^2', 'P_value'])
-        print summary
         return summary
 
     def genotype_regression1(self, phenotypes=['biofilm'], intercept=True):
@@ -1160,7 +1136,7 @@ class GLS_Regression:
                 phenpvals.append(pval1)
             logphen = -np.log10(phenpvals)
             phenpvaldf[phen] = np.array(logphen)
-        print 'Finished'
+        print 'GLS regression finished'
         return phenpvaldf
 
     def genotype_regression2(self, phenotypes=['biofilm'], intercept=True):
@@ -1204,64 +1180,8 @@ class GLS_Regression:
                 phenpvals.append(pval)
             logphen = -np.log10(phenpvals)
             phenpvaldf[phen] = np.array(logphen)
-        print 'Finished'
+        print 'GLS regression finished'
         return phenpvaldf
-    """
-    Note: not functional as of 10/27/15, though appears to have no syntactic errors. Not super important - may fix later
-
-    def genotype_regression3(self, phenotypes=['biofilm'], intercept=True):
-        #
-        Notes on this method:
-        - Binary phenotype (at first)
-        - y = alpha + beta*x + T*Gamma. There is still only one degree of freedom, though Gamma will be 30x1 and
-        T*Gamma is really np.multiply(T, Gamma).
-        - Simple OLS regression with 30 covariates, one degree of freedom (of the mean).
-        - Employs a likelihood ratio test (LRT) between a null model (just covariates) and the alternative (cov. + X)
-        - Uses statsmodels and patsy (slow)
-        #
-        if intercept is False:
-            pass
-        covmat = self.covariance
-        T = np.linalg.cholesky(covmat).T
-        compdf = self.complete_df.copy()
-        Tcols = ['T%d'%i for i in range(1, np.shape(T)[0]+1)]
-        Tdf = pd.DataFrame(T, columns=Tcols)
-        compdf = pd.concat((compdf, Tdf), axis=1)
-        phenpvaldf = pd.DataFrame(np.zeros((self.word_count, len(phenotypes))),
-                                  index=np.arange(1, self.word_count+1), columns=phenotypes)
-        Tstring = ''
-        i = 0
-        while i < len(Tcols)-1:
-            Tstring = Tstring + '%s + '%(Tcols[i])
-            i += 1
-        Tstring = Tstring + Tcols[-1]
-
-        for phen in phenotypes:
-            phenpvals = []
-            if intercept is True:
-                yn1, Xn1 = dmatrices('%s ~ %s'%(phen, Tstring), data=compdf, return_type='dataframe')
-            else:
-                yn1, Xn1 = dmatrices('%s ~ %s - 1'%(phen, Tstring), data=compdf, return_type='dataframe')
-            modn1 = sm.OLS(yn1, Xn1)
-            resn1 = modn1.fit()
-            llhn1 = resn1.llf
-
-            for i in range(1, self.word_count+1):
-                if intercept is True:
-                    arg = '%(phenotype)s ~ %(ts)s + word%(index)d'%{'phenotype':phen, 'ts':Tstring, 'index':i}
-                else:
-                    arg = '%(phenotype)s ~ %(ts)s + word%(index)d - 1'%{'phenotype':phen, 'ts':Tstring, 'index':i}
-                y1, X1 = dmatrices(arg, data=compdf, return_type='dataframe')
-                mod1 = sm.OLS(y1, X1)
-                res1 = mod1.fit()
-                llh1 = res1.llf
-                pval1 = 1-chi2.cdf(2*(llh1-llhn1), 1)
-                phenpvals.append(pval1)
-            logp = -np.log10(phenpvals)
-            phenpvaldf[phen] = np.array(logp)
-        print 'Finished'
-        return phenpvaldf
-    """
 
     def significant_hits_df(self, phenotype=['biofilm'], intercept=True, signif=0.05):
         """
@@ -1354,7 +1274,7 @@ class GLS_Plotter:
         self.strains = self.phen_df['genome_id']
         self.pvaldf = self.gls.genotype_regression2(phenotypes=self.phens, intercept=self.intercept)
 
-    def phenotype_regression_plot(self, phen_ind=None, phen_dep=None, intercept=True):
+    def phenotype_regression_plot(self, phen_ind=None, phen_dep=None):
         """
         Recreates the phenotype regression plot in the manuscript.  Unfortunately the phenotype regression must be
         calculated from scratch (code pasted from GLS_Regression.phenotype_regression), but it's a quick calculation.
@@ -1365,7 +1285,7 @@ class GLS_Plotter:
             phen_dep = self.phens[1]
         gendf = self.gen_df
         if self.binary is True:
-            phen_cont = self.psdfs.phenotype_dataframe(continuous=True) # Cont. required for phen/phen regression
+            phen_cont = self.psdfs.phenotype_dataframe(continuous=True)    # Cont. required for phen/phen regression
         else:
             phen_cont = self.phen_df
         indphen = phen_cont[phen_ind].reshape(len(self.strains), 1)
@@ -1375,11 +1295,8 @@ class GLS_Plotter:
 
         T = np.linalg.cholesky(covmat)
         Y_c = np.dot(np.linalg.inv(T), depphen)
-        if intercept is False:
-            X_c = np.dot(np.linalg.inv(T), indphen)
-        else:
-            X_c = np.dot(np.linalg.inv(T), indphen)
-            X_c = np.concatenate((np.ones((strainlen, 1)), X_c), axis=1)
+        X_c = np.dot(np.linalg.inv(T), indphen)
+        X_c = np.concatenate((np.ones((strainlen, 1)), X_c), axis=1)
         beta = np.dot(np.linalg.inv(np.dot(X_c.T, X_c)), np.dot(X_c.T, Y_c))
         y_exp = np.dot(X_c, beta)
         sst = np.sum((Y_c-np.mean(Y_c))**2)
@@ -1392,7 +1309,7 @@ class GLS_Plotter:
         x = X_c[:, -1]
         y = Y_c
         plot1, = pylab.plot(x, y, 'bo')
-        labels = [np.array(list(self.psdfs.strain_legend))[i, 1] for i in range(len(self.strains))]
+        labels = [np.array(self.psdfs.strain_legend)[i, 1] for i in range(len(self.strains))]
         for i in range(len(labels)):
             pylab.annotate(labels[i], xy=(x[i], y[i]), xytext=(10, 10), textcoords='offset points')
         x2 = np.linspace(int(np.min(X_c))-50, int(np.max(X_c))+50, 50)
@@ -1427,7 +1344,7 @@ class GLS_Plotter:
 
     def manhattan(self, phenotype=None, write=False):
         """
-        Need to queue this by start site - currently unresolved issue.
+        Need to queue this by start site, for example PA14.
 
         orf_legend = np.array(list(self.psdfs.orf_legend))
         orflegdf = pd.DataFrame(orf_legend, columns=['cdhit_id', 'start', 'std_locus_name'])
@@ -1442,7 +1359,7 @@ class GLS_Plotter:
         pylab.xlabel('word id')
         pylab.ylabel('-log10(p-val)')
         pylab.title('Phyl. Manhattan Plot: %s'%(phenotype))
-        if write == True:
+        if write is True:
             from datetime import date
             filename = 'manhattan_'+phenotype+'_'+str(date.today())+'.png'
             pylab.savefig(filename)
@@ -1461,7 +1378,8 @@ class GenomeExporter:
         annotations originate from loci in either PA01 or PA14, as reflected by the boolean indexing of the raw df
         gene_code_df.  The genecode.csv file derives from the 'paerug' database in borreliabase.org, which was created
         directly from postgres.  Writing the csv file was less arduous than trying to use psycopg2 to query both pa2
-        and paerug.
+        and paerug, but the databases have yet to be condensed.  Be aware that the path will be different on different
+        machines.
 
         Worth noting: The formation of cdhit_locus_dict from locus_cdhit_dict as opposed to reversing the order of the
         locus/cdhit query is necessary because multiple a single cdhit id can map to multiple locus names and keys must
@@ -1474,6 +1392,7 @@ class GenomeExporter:
         self.db = sdb.SpringDb()
         self.strain_legend = dict(self.db.getAllResultsFromDbQuery('SELECT genome_id, strain_name FROM genome'))
         self.assembly_legend = dict(self.db.getAllResultsFromDbQuery('SELECT genome_id, assembly_status FROM genome'))
+        # The following file is located within the github directory - change the path as needed.
         self.gene_code_df = pd.read_csv('/Users/torokj/Documents/Pseudomonas-GWAS/genecode.csv', header=None)
         gene_code_arr = np.array(self.gene_code_df)
         loci_number = np.shape(gene_code_arr)[0]
@@ -1508,7 +1427,7 @@ class GenomeExporter:
     def fasta_genome(self, genomes=None):
         """
         The genomes in pa2 are either closed or consist of several long contigs that have been concatenated together and
-        separated by a characteristic 36-bp spacer.  Determining the true
+        separated by a characteristic 36-bp spacer.  This is for getting raw whole-genome sequence files.
         """
         from Bio.Seq import Seq
         from Bio.Alphabet import IUPAC
@@ -1538,7 +1457,8 @@ class GenomeExporter:
                 end_note = 'end={}'.format(len(seq))
                 seq_id = 'gi|' + strain_note + '|' + gen_note + '|' + contig_note + '|' + start_note + '|' + end_note
                 seq_rec = SeqRecord(seq, id=seq_id, description='')
-                SeqIO.write(seq_rec, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                SeqIO.write(seq_rec, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.fasta',
+                            'fasta')
                 print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
             elif self.assembly_legend[gen_dict[i]] == 'supercontig':
                 contig_locs = list([0])
@@ -1560,10 +1480,14 @@ class GenomeExporter:
                              start_note + '|' + end_note
                     seq_rec = SeqRecord(contig, id=seq_id, description='')
                     rec_list.append(seq_rec)
-                SeqIO.write(rec_list, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                SeqIO.write(rec_list, 'genome_{}_raw_sequence'.format(self.strain_legend[gen_dict[i]])+'.fasta',
+                            'fasta')
                 print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
 
     def fasta_annotation(self, genomes=None):
+        """
+        Outputs the ORFs and their annotations (if they're documented).
+        """
         from Bio.Seq import Seq
         from Bio.Alphabet import IUPAC
         from Bio.SeqRecord import SeqRecord
@@ -1620,7 +1544,7 @@ class GenomeExporter:
                     seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
                     seq_rec = SeqRecord(seq, id=seq_id, description='')
                     rec_list.append(seq_rec)
-                SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.fasta', 'fasta')
                 print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
 
             elif self.assembly_legend[gen_dict[i]] == 'supercontig':
@@ -1670,5 +1594,5 @@ class GenomeExporter:
                     seq_id = 'gi|' + seq_id + '{}'.format(seq_id_list[-1])
                     seq_rec = SeqRecord(seq, id=seq_id, description='')
                     rec_list.append(seq_rec)
-                SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.faa', 'fasta')
+                SeqIO.write(rec_list, 'genome_{}_annotations'.format(self.strain_legend[gen_dict[i]])+'.fasta', 'fasta')
                 print 'strain_{}'.format(self.strain_legend[gen_dict[i]])+' is complete. #{}/{}'.format(i+1, len(query))
